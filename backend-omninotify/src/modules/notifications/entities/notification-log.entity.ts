@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn } from 'typeorm';
-import { Company } from '../../companies/entities/company.entity';
+// import { Company } from '../../companies/entities/company.entity';
 import { Contact } from '../../contacts/entities/contact.entity';
 import { NotificationChannel } from '../../templates/entities/template.entity';
 
@@ -40,9 +40,9 @@ export class NotificationLog {
   created_at: Date;
 
   // Relaciones
-  @ManyToOne(() => Company, (company) => company.notification_logs)
-  @JoinColumn({ name: 'company_id' })
-  company: Company;
+  // @ManyToOne(() => Company, (company) => company.notification_logs)
+  // @JoinColumn({ name: 'company_id' })
+  // company: Company;
 
   @ManyToOne(() => Contact, { nullable: true })
   @JoinColumn({ name: 'contact_id' })

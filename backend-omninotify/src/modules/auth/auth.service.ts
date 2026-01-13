@@ -18,7 +18,7 @@ export class AuthService {
 
     const isValid = await this.usersService.validatePassword(
       password,
-      user.password_hash,
+      user.password,
     );
 
     if (!isValid) {
@@ -28,12 +28,20 @@ export class AuthService {
     const payload = {
       sub: user.id,
       companyId: user.company_id,
-      role: user.user_role,
+      role: user.role,
       email: user.email,
     };
 
+    // DEVUELVE TAMBIÉN EL USUARIO - ESTO ES CRÍTICO
     return {
       access_token: this.jwtService.sign(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        company_id: user.company_id
+      }
     };
   }
 }

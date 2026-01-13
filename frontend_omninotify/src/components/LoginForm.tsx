@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom'; // <-- AÑADE ESTO
 
 interface LoginFormData {
     email: string;
@@ -9,6 +10,18 @@ interface LoginFormData {
 interface LoginFormErrors {
     email?: string;
     password?: string;
+}
+
+// Interface para la respuesta del backend
+interface LoginResponse {
+    access_token: string;
+    user?: {
+        id: string;
+        email: string;
+        name: string;
+        role: string;
+        company_id: string;
+    };
 }
 
 // Textos para ambos idiomas
@@ -34,8 +47,12 @@ const translations = {
         minPassword: "Minimum 6 characters",
         welcome: "Welcome",
         loginError: "Login error",
+        loginSuccess: "Login successful! Redirecting...",
         language: "English",
-        switchTo: "Switch to Spanish"
+        switchTo: "Switch to Spanish",
+        apiError: "Error connecting to server",
+        invalidCredentials: "Invalid email or password",
+        debugInfo: "Debug Info:"
     },
     es: {
         title: "Bienvenid@ a Omni-Notify",
@@ -58,14 +75,29 @@ const translations = {
         minPassword: "Mínimo 6 caracteres",
         welcome: "¡Bienvenido",
         loginError: "Error al iniciar sesión",
+        loginSuccess: "¡Inicio de sesión exitoso! Redirigiendo...",
         language: "Español",
-        switchTo: "Cambiar a Inglés"
+        switchTo: "Cambiar a Inglés",
+        apiError: "Error al conectar con el servidor",
+        invalidCredentials: "Email o contraseña incorrectos",
+        debugInfo: "Información de Depuración:"
     }
 };
 
 type Language = 'en' | 'es';
 
+// URL de tu backend - usa variables de entorno
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+
+// Detectar si estamos en desarrollo
+const IS_DEVELOPMENT =
+  import.meta.env.MODE === 'development' ||
+  window.location.hostname === 'localhost';
+
+
 const LoginForm: React.FC = () => {
+    const navigate = useNavigate(); // <-- AÑADE ESTO
+    
     const [language, setLanguage] = useState<Language>('en');
     const t = translations[language];
     
@@ -78,6 +110,8 @@ const LoginForm: React.FC = () => {
     const [errors, setErrors] = useState<LoginFormErrors>({});
     const [isLoading, setIsLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+    const [loginMessage, setLoginMessage] = useState<string>('');
+    const [messageType, setMessageType] = useState<'success' | 'error'>('error');
 
     // Cargar lenguaje preferido del localStorage al iniciar
     useEffect(() => {
@@ -117,6 +151,7 @@ const LoginForm: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setLoginMessage('');
 
         if (!validateForm()) {
             return;
@@ -124,14 +159,66 @@ const LoginForm: React.FC = () => {
 
         setIsLoading(true);
 
-        // Simulación de API call
         try {
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            console.log('Datos enviados:', formData);
-            alert(`${t.welcome} ${formData.email}!`);
-        } catch (error) {
-            console.error('Error en login:', error);
-            alert(t.loginError);
+            console.log(`📡 Enviando login a: ${API_BASE_URL}/auth/login`);
+            
+            // Llamada REAL a tu API NestJS
+            const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    email: formData.email,
+                    password: formData.password
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                // Error del servidor (401, 500, etc.)
+                throw new Error(data.message || t.invalidCredentials);
+            }
+
+            // ÉXITO: Guardar token y datos del usuario
+            console.log('✅ Login exitoso:', data);
+            
+            // Guardar el token JWT
+            localStorage.setItem('auth_token', data.access_token);
+            if (data.user) {
+                localStorage.setItem('user_data', JSON.stringify(data.user));
+            }
+            
+            // Guardar credenciales si "Recordarme" está activado
+            if (formData.rememberMe) {
+                localStorage.setItem('remembered_email', formData.email);
+            } else {
+                localStorage.removeItem('remembered_email');
+            }
+            
+            setMessageType('success');
+            setLoginMessage(t.loginSuccess);
+            
+            // Redirigir después de 2 segundos - CAMBIA ESTO:
+            setTimeout(() => {
+                navigate('/dashboard'); // <-- CAMBIADO: de window.location.href a navigate
+            }, 1000);
+
+        } catch (error: any) {
+            console.error('❌ Error en login:', error);
+            
+            setMessageType('error');
+            
+            // Mostrar mensaje específico según el error
+            if (error.message === 'Failed to fetch') {
+                setLoginMessage(`${t.apiError}: ${API_BASE_URL}`);
+                console.error(`🔌 Verifica que el backend esté corriendo en: ${API_BASE_URL}`);
+            } else {
+                setLoginMessage(error.message || t.loginError);
+            }
+            
         } finally {
             setIsLoading(false);
         }
@@ -148,7 +235,24 @@ const LoginForm: React.FC = () => {
         if (errors[name as keyof LoginFormErrors]) {
             setErrors(prev => ({ ...prev, [name]: undefined }));
         }
+        
+        // Limpiar mensajes
+        if (loginMessage) {
+            setLoginMessage('');
+        }
     };
+
+    // Cargar email guardado si existe
+    useEffect(() => {
+        const rememberedEmail = localStorage.getItem('remembered_email');
+        if (rememberedEmail) {
+            setFormData(prev => ({
+                ...prev,
+                email: rememberedEmail,
+                rememberMe: true
+            }));
+        }
+    }, []);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -184,6 +288,35 @@ const LoginForm: React.FC = () => {
 
                     {/* Formulario */}
                     <div className="p-8">
+                        {/* Mensaje de éxito/error */}
+                        {loginMessage && (
+                            <div className={`mb-6 p-4 rounded-lg ${messageType === 'success' 
+                                ? 'bg-green-50 text-green-800 border border-green-200' 
+                                : 'bg-red-50 text-red-800 border border-red-200'
+                            }`}>
+                                <div className="flex items-center">
+                                    {messageType === 'success' ? (
+                                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                        </svg>
+                                    )}
+                                    <span className="font-medium">
+                                        {messageType === 'success' ? t.loginSuccess.split('!')[0] + '!' : t.loginError}:
+                                    </span>
+                                </div>
+                                <p className="mt-1 text-sm">{loginMessage}</p>
+                                {messageType === 'error' && (
+                                    <p className="mt-2 text-xs opacity-75">
+                                        Backend URL: {API_BASE_URL}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         <form onSubmit={handleSubmit} className="space-y-6">
 
                             {/* Email */}
@@ -201,6 +334,7 @@ const LoginForm: React.FC = () => {
                                         } focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition`}
                                     placeholder={t.emailPlaceholder}
                                     disabled={isLoading}
+                                    autoComplete="username"
                                 />
                                 {errors.email && (
                                     <p className="mt-1 text-sm text-red-600">{errors.email}</p>
@@ -228,6 +362,7 @@ const LoginForm: React.FC = () => {
                                             } focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition pr-12`}
                                         placeholder={t.passwordPlaceholder}
                                         disabled={isLoading}
+                                        autoComplete="current-password"
                                     />
                                     <button
                                         type="button"
@@ -305,35 +440,6 @@ const LoginForm: React.FC = () => {
                                 </a>
                             </p>
                         </div>
-
-                        {/* Opcional: Social Login
-                        <div className="mt-8">
-                            <div className="relative">
-                                <div className="absolute inset-0 flex items-center">
-                                    <div className="w-full border-t border-gray-300"></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                    <span className="px-2 bg-white text-gray-500">{t.socialLogin}</span>
-                                </div>
-                            </div>
-                            <div className="mt-6 grid grid-cols-2 gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => handleSocialLogin('Google')}
-                                    className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                                >
-                                    Google
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleSocialLogin('GitHub')}
-                                    className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                                >
-                                    GitHub
-                                </button>
-                            </div>
-                        </div>
-                        */}
                     </div>
                 </div>
             </div>

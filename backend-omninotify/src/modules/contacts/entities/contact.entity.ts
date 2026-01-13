@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, ManyToMany, JoinTable } from 'typeorm';
-import { Company } from '../../companies/entities/company.entity';
+// import { Company } from '../../companies/entities/company.entity';
 import { Tag } from '../../tags/entities/tag.entity';
 
 @Entity('contacts')
@@ -28,9 +28,9 @@ export class Contact {
   created_at: Date;
 
   // Relaciones
-  @ManyToOne(() => Company, (company) => company.contacts)
-  @JoinColumn({ name: 'company_id' })
-  company: Company;
+  // @ManyToOne(() => Company, (company) => company.contacts)
+  // @JoinColumn({ name: 'company_id' })
+  // company: Company;
 
   // Relación many-to-many con Tags
   @ManyToMany(() => Tag, (tag) => tag.contacts)

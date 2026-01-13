@@ -6,7 +6,7 @@ import { AppService } from './app.service';
 // Importa los módulos que YA EXISTEN
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
-
+import { ConfigModule } from '@nestjs/config';
 // Importa los módulos NUEVOS (crearas después)
 // import { CompaniesModule } from './modules/companies/companies.module';
 // import { ContactsModule } from './modules/contacts/contacts.module';
@@ -17,12 +17,15 @@ import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
-    DatabaseModule, // ⭐ ESTO CONECTA TODO A MYSQL
-    AuthModule,
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    DatabaseModule,
     UsersModule,
-    // Después descomenta y agrega los otros módulos
+    AuthModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
+   controllers: [AppController],  // ← ¡AGREGA ESTO!
+  providers: [AppService],       // ← ¡AGREGA ESTO!
+  exports: [],
 })
 export class AppModule {}

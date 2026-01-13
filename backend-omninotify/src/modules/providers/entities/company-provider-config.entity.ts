@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
-import { Company } from '../../companies/entities/company.entity';
+// import { Company } from '../../companies/entities/company.entity';
 import { Provider } from './provider.entity';
 
 @Entity('company_provider_configs')
@@ -18,9 +18,9 @@ export class CompanyProviderConfig {
   config: Record<string, any>;
 
   // Relaciones
-  @ManyToOne(() => Company, (company) => company.provider_configs)
-  @JoinColumn({ name: 'company_id' })
-  company: Company;
+  // @ManyToOne(() => Company, (company) => company.provider_configs)
+  // @JoinColumn({ name: 'company_id' })
+  // company: Company;
 
   @ManyToOne(() => Provider, (provider) => provider.company_configs)
   @JoinColumn({ name: 'provider_id' })

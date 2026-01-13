@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
-import { Company } from '../../companies/entities/company.entity';
+// import { Company } from '../../companies/entities/company.entity';
 import { ScheduledNotification } from '../../notifications/entities/scheduled-notification.entity';
 
 export enum NotificationChannel {
@@ -30,9 +30,9 @@ export class Template {
   provider_template_id: string;
 
   // Relaciones
-  @ManyToOne(() => Company, (company) => company.templates)
-  @JoinColumn({ name: 'company_id' })
-  company: Company;
+  // @ManyToOne(() => Company, (company) => company.templates)
+  // @JoinColumn({ name: 'company_id' })
+  // company: Company;
 
   @OneToMany(() => ScheduledNotification, (sched) => sched.template)
   scheduled_notifications: ScheduledNotification[];
