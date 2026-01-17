@@ -1,7 +1,6 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import * as dotenv from 'dotenv';
 
-// Importar TODAS las entities
 // import { Company } from '../modules/companies/entities/company.entity';
 import { User } from '../modules/users/entities/user.entity';
 import { Contact } from '../modules/contacts/entities/contact.entity';
@@ -25,8 +24,8 @@ export const typeOrmConfig: TypeOrmModuleOptions = {
   entities: [
     // Company,
     User,
-    // Contact,
-    // Tag,
+    Contact,
+    Tag,
     // Template,
     // ScheduledNotification,
     // NotificationLog,
@@ -34,7 +33,7 @@ export const typeOrmConfig: TypeOrmModuleOptions = {
     // CompanyProviderConfig,
   ],
   
-  synchronize: true,
+  synchronize: false,
   logging: true,
   // timezone: 'UTC',
   charset: 'utf8mb4',

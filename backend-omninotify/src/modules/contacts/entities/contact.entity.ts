@@ -20,8 +20,8 @@ export class Contact {
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string;
 
-  // Metadatos: tags, segmentos, etc.
-  @Column({ type: 'jsonb', nullable: true })
+  // CORRECCIÓN: Cambia 'jsonb' por 'json' para MySQL
+  @Column({ type: 'json', nullable: true })
   metadata: Record<string, any>;
 
   @CreateDateColumn()

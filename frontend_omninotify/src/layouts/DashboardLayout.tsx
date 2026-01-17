@@ -42,6 +42,7 @@ const DashboardLayout: React.FC = () => {
     const path = location.pathname;
     if (path.includes('templates')) return 'Templates';
     if (path.includes('contacts')) return 'Contacts';
+    if (path.includes('tags')) return 'Tags';
     if (path.includes('notifications')) return 'Send Notifications';
     if (path.includes('profile')) return 'Profile';
     return 'Dashboard';

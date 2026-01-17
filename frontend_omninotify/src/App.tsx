@@ -6,6 +6,7 @@ import DashboardLayout from './layouts/DashboardLayout';
 import DashboardPage from './pages/Dashboard';
 import TemplatesPage from './pages/Templates';
 import ContactsPage from './pages/Contacts';
+import TagsPage from './pages/Tags';
 import NotificationsPage from './pages/Notifications';
 import ProfilePage from './pages/Profile';
 
@@ -25,6 +26,7 @@ function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="templates" element={<TemplatesPage />} />
           <Route path="contacts" element={<ContactsPage />} />
+          <Route path="tags" element={<TagsPage />} /> 
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>

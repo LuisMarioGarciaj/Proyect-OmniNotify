@@ -10,7 +10,8 @@ import {
   Menu,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Tag
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -32,6 +33,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/dashboard' },
     { id: 'templates', label: 'Templates', icon: <Mail size={20} />, path: '/templates' },
     { id: 'contacts', label: 'Contacts', icon: <Users size={20} />, path: '/contacts' },
+    { id: 'tags', label: 'Tags', icon: <Tag size={20} />, path: '/tags' },
     { id: 'notifications', label: 'Send Notifications', icon: <Bell size={20} />, path: '/notifications' },
     { id: 'profile', label: 'Profile', icon: <User size={20} />, path: '/profile' },
   ];
