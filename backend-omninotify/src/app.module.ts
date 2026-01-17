@@ -8,12 +8,12 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ConfigModule } from '@nestjs/config';
 // Importa los módulos NUEVOS (crearas después)
-// import { CompaniesModule } from './modules/companies/companies.module';
-// import { ContactsModule } from './modules/contacts/contacts.module';
-// import { TagsModule } from './modules/tags/tags.module';
-// import { TemplatesModule } from './modules/templates/templates.module';
-// import { NotificationsModule } from './modules/notifications/notifications.module';
-// import { ProvidersModule } from './modules/providers/providers.module';
+//import { CompaniesModule } from './modules/companies/companies.module'
+import { ContactsModule } from './modules/contacts/contacts.module';
+//import { TagsModule } from './modules/tags/tags.module';
+//import { TemplatesModule } from './modules/templates/templates.module';
+//import { NotificationsModule } from './modules/notifications/notifications.module';
+//import { ProvidersModule } from './modules/providers/providers.module';
 
 @Module({
   imports: [
@@ -23,6 +23,7 @@ import { ConfigModule } from '@nestjs/config';
     DatabaseModule,
     UsersModule,
     AuthModule,
+    ContactsModule,
   ],
    controllers: [AppController],  // ← ¡AGREGA ESTO!
   providers: [AppService],       // ← ¡AGREGA ESTO!

@@ -5,7 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import DashboardLayout from './layouts/DashboardLayout';
 import DashboardPage from './pages/Dashboard';
 import TemplatesPage from './pages/Templates';
-import ContactsPage from './pages/Contacts';
+import ContactsPage from './pages/contacts/ContactsPage';
 import NotificationsPage from './pages/Notifications';
 import ProfilePage from './pages/Profile';
 

@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, ManyToMa
 // import { Company } from '../../companies/entities/company.entity';
 import { Contact } from '../../contacts/entities/contact.entity';
 
-@Entity('tags')
+@Entity('Tag')
 export class Tag {
   @PrimaryGeneratedColumn('uuid')
   id: string;

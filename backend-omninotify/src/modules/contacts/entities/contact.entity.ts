@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, Jo
 // import { Company } from '../../companies/entities/company.entity';
 import { Tag } from '../../tags/entities/tag.entity';
 
-@Entity('contacts')
+@Entity('Contact')
 export class Contact {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -21,7 +21,7 @@ export class Contact {
   phone: string;
 
   // Metadatos: tags, segmentos, etc.
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ type: 'json', nullable: true })
   metadata: Record<string, any>;
 
   @CreateDateColumn()

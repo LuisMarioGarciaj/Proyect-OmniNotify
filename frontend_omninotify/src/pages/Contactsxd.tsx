@@ -49,4 +49,4 @@ const ContactsPage: React.FC = () => {
   );
 };
 
-export default ContactsPage;
+export default ContactsPage
