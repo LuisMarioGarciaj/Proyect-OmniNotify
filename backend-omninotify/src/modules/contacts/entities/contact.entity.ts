@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, Jo
 // import { Company } from '../../companies/entities/company.entity';
 import { Tag } from '../../tags/entities/tag.entity';
 
-@Entity('contacts')
+@Entity('Contact')
 export class Contact {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -20,7 +20,7 @@ export class Contact {
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string;
 
-  // CORRECCIÓN: Cambia 'jsonb' por 'json' para MySQL
+  // Metadatos: tags, segmentos, etc.
   @Column({ type: 'json', nullable: true })
   metadata: Record<string, any>;
 

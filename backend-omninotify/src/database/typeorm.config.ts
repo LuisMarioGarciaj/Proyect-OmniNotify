@@ -32,7 +32,7 @@ export const typeOrmConfig: TypeOrmModuleOptions = {
     // Provider,
     // CompanyProviderConfig,
   ],
-  
+  autoLoadEntities: true,
   synchronize: false,
   logging: true,
   // timezone: 'UTC',
