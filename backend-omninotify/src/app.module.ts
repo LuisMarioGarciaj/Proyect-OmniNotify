@@ -12,7 +12,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { TagsModule } from './modules/tags/tags.module';
 // import { TemplatesModule } from './modules/templates/templates.module';
-// import { NotificationsModule } from './modules/notifications/notifications.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 // import { ProvidersModule } from './modules/providers/providers.module';
 
 @Module({
@@ -25,9 +25,10 @@ import { TagsModule } from './modules/tags/tags.module';
     AuthModule,
     TagsModule,
     ContactsModule,
+    NotificationsModule,
   ],
-   controllers: [AppController],  // ← ¡AGREGA ESTO!
-  providers: [AppService],       // ← ¡AGREGA ESTO!
+   controllers: [AppController], 
+  providers: [AppService],       
   exports: [],
 })
 export class AppModule {}
