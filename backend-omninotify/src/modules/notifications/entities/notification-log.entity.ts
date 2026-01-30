@@ -1,40 +1,54 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn } from 'typeorm';
-import { NotificationChannel } from '../../templates/entities/template.entity';
+// src/modules/notifications/entities/notification-log.entity.ts
+import { 
+  Entity, 
+  Column, 
+  PrimaryGeneratedColumn, 
+  CreateDateColumn,
+  Index 
+} from 'typeorm';
+import { 
+  NotificationChannel, 
+  NotificationStatus 
+} from '../dto/send-notification.dto';
 
-export enum NotificationLogStatus {
-  PENDING = 'PENDING',
-  SENT = 'SENT',
-  FAILED = 'FAILED',
-  DELIVERED = 'DELIVERED'
-}
-
-@Entity('Notification_Logs')
-export class NotificationLog {
-  @PrimaryColumn({ type: 'char', length: 36 })
+@Entity('Notification_Logs') // ✅ Nombre de tabla en plural
+@Index(['companyId'])
+@Index(['contactId'])
+@Index(['jobId'])
+@Index(['status'])
+@Index(['createdAt'])
+export class NotificationLog { // ✅ Nombre de clase en singular
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'char', length: 36 })
-  company_id: string;
+  @Column({ name: 'company_id', type: 'char', length: 36 })
+  companyId: string;
 
-  @Column({ type: 'char', length: 36, nullable: true })
-  contact_id: string | null; // ← nullable
+  @Column({ name: 'contact_id', type: 'char', length: 36, nullable: true })
+  contactId: string;
 
-  @Column({ type: 'enum', enum: NotificationChannel })
+  @Column({ 
+    type: 'enum', 
+    enum: NotificationChannel 
+  })
   channel: NotificationChannel;
 
-  @Column({ type: 'varchar', length: 150 })
+  @Column({ length: 150 })
   recipient: string;
 
-  @Column({ type: 'enum', enum: NotificationLogStatus })
-  status: NotificationLogStatus;
+  @Column({ 
+    type: 'enum', 
+    enum: NotificationStatus,
+    default: NotificationStatus.PENDING 
+  })
+  status: NotificationStatus;
 
-  @Column({ type: 'text', nullable: true })
-  error_message: string | null; // ← nullable
+  @Column({ name: 'error_message', type: 'text', nullable: true })
+  errorMessage: string;
 
-  // IMPORTANTE: job_id debe ser nullable
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  job_id: string | null; // ← AÑADE | null
+  @Column({ name: 'job_id', length: 100, nullable: true })
+  jobId: string;
 
-  @CreateDateColumn({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  created_at: Date;
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
 }

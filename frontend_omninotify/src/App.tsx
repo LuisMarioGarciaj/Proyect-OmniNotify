@@ -19,6 +19,7 @@ function App() {
         <Route path="/login" element={<LoginForm />} />
         
         {/* Rutas protegidas dentro del layout */}
+       
         <Route path="/" element={
           
             <DashboardLayout />

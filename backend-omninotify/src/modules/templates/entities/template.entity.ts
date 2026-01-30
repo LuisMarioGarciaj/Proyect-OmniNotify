@@ -26,4 +26,5 @@ export class Template {
   // IMPORTANTE: Debe ser nullable
   @Column({ type: 'varchar', length: 150, nullable: true })
   provider_template_id: string | null; // Añade | null aquí
+  scheduledNotifications: any;
 }

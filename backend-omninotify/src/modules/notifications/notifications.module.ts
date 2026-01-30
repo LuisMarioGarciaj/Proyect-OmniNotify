@@ -1,7 +1,8 @@
+// src/modules/notifications/notifications.module.ts
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 // Controladores
 import { NotificationsController } from './notifications.controller';
@@ -10,29 +11,48 @@ import { EmailController } from './controllers/email.controller';
 // Servicios
 import { NotificationsService } from './notifications.service';
 
-// ✅ ÚNICO processor que debe existir
-import { EmailProcessor } from './processors/email.processor';
+// Processors
+import { NotificationProcessor } from './processors/notification.processor';
 
 // Proveedores
 import { EmailProvider } from './providers/email.provider';
 
 // Entidades
-import { NotificationLog } from './entities/notification-log.entity';
+import { NotificationLog } from './entities/notification-log.entity'; // ✅ Singular
 import { ScheduledNotification } from './entities/scheduled-notification.entity';
 
 @Module({
   imports: [
     ConfigModule,
     TypeOrmModule.forFeature([
-      NotificationLog,
+      NotificationLog, // ✅ Singular
       ScheduledNotification,
     ]),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('REDIS_HOST', 'localhost'),
+          port: configService.get<number>('REDIS_PORT', 6379),
+          password: configService.get<string>('REDIS_PASSWORD', ''),
+          tls: configService.get<boolean>('REDIS_TLS', false) 
+            ? { rejectUnauthorized: false } 
+            : undefined,
+        },
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
+          },
+          removeOnComplete: 100,
+          removeOnFail: 500,
+        },
+      }),
+    }),
     BullModule.registerQueue({
-      name: 'notification-queue',
-      connection: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: Number(process.env.REDIS_PORT || 6379),
-      },
+      name: 'notifications',
     }),
   ],
   controllers: [
@@ -41,7 +61,7 @@ import { ScheduledNotification } from './entities/scheduled-notification.entity'
   ],
   providers: [
     NotificationsService,
-    EmailProcessor, // ✅ ESTE ES EL WORKER
+    NotificationProcessor,
     EmailProvider,
   ],
   exports: [
