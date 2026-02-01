@@ -3,31 +3,41 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { HttpModule } from '@nestjs/axios';
 
-// Controladores
+// Controladores y Servicios existentes...
 import { NotificationsController } from './notifications.controller';
 import { EmailController } from './controllers/email.controller';
-
-// Servicios
+import { WhatsappController } from './controllers/whatsapp.controller'; 
 import { NotificationsService } from './notifications.service';
-
-// Processors
+import { TemplatesModule } from '../templates/templates.module';
 import { NotificationProcessor } from './processors/notification.processor';
 
 // Proveedores
 import { EmailProvider } from './providers/email.provider';
+import { WhatsappProvider } from './providers/whatsapp/whatsapp.provider'; 
+import { NexoWhatsappProvider } from './providers/nexo-whatsapp.provider';
 
-// Entidades
-import { NotificationLog } from './entities/notification-log.entity'; // ✅ Singular
+// Entidades (Asegúrate de que las rutas sean correctas)
+import { CompanyProviderConfig } from '../providers/entities/company-provider-config.entity'; 
+import { Provider } from '../providers/entities/provider.entity';
+import { NotificationLog } from './entities/notification-log.entity';
 import { ScheduledNotification } from './entities/scheduled-notification.entity';
+import { Template } from '../templates/entities/template.entity';
 
 @Module({
   imports: [
     ConfigModule,
+    HttpModule,
+    TemplatesModule, 
     TypeOrmModule.forFeature([
-      NotificationLog, // ✅ Singular
+      NotificationLog,
       ScheduledNotification,
+      Template,
+      CompanyProviderConfig, // ✨ MOVIDO AQUÍ
+      Provider,              // ✨ MOVIDO AQUÍ
     ]),
+
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -36,21 +46,10 @@ import { ScheduledNotification } from './entities/scheduled-notification.entity'
           host: configService.get<string>('REDIS_HOST', 'localhost'),
           port: configService.get<number>('REDIS_PORT', 6379),
           password: configService.get<string>('REDIS_PASSWORD', ''),
-          tls: configService.get<boolean>('REDIS_TLS', false) 
-            ? { rejectUnauthorized: false } 
-            : undefined,
-        },
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
-          },
-          removeOnComplete: 100,
-          removeOnFail: 500,
         },
       }),
     }),
+
     BullModule.registerQueue({
       name: 'notifications',
     }),
@@ -58,15 +57,20 @@ import { ScheduledNotification } from './entities/scheduled-notification.entity'
   controllers: [
     NotificationsController,
     EmailController,
+    WhatsappController,
   ],
   providers: [
     NotificationsService,
     NotificationProcessor,
     EmailProvider,
+    WhatsappProvider,
+    NexoWhatsappProvider,
   ],
   exports: [
     NotificationsService,
     EmailProvider,
+    WhatsappProvider,
+    NexoWhatsappProvider,
   ],
 })
 export class NotificationsModule {}

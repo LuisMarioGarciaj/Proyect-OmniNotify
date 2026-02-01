@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { NotificationWorker } from '../workers/notification.worker'
 
 @Module({
   imports: [
@@ -34,7 +35,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       name: 'emails',
     }),
   ],
-  providers: [], // No necesitas providers aquí
+  providers: [NotificationWorker], // No necesitas providers aquí
   exports: [BullModule],
 })
 export class QueuesModule {}

@@ -5,7 +5,7 @@ import { Queue } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SendNotificationDto } from './dto/send-notification.dto';
-import { NotificationLog } from './entities/notification-log.entity'; // ✅ Singular
+import { NotificationLog } from './entities/notification-log.entity'; 
 
 @Injectable()
 export class NotificationsService {
@@ -13,8 +13,8 @@ export class NotificationsService {
 
   constructor(
     @InjectQueue('notifications') private notificationsQueue: Queue,
-    @InjectRepository(NotificationLog) // ✅ Singular
-    private notificationLogsRepository: Repository<NotificationLog>, // ✅ Singular
+    @InjectRepository(NotificationLog) 
+    private notificationLogsRepository: Repository<NotificationLog>, 
   ) {}
 
   async enqueueNotification(dto: SendNotificationDto): Promise<any> {

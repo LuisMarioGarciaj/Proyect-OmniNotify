@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { NotificationChannel } from '../../templates/entities/template.entity';
 import { CompanyProviderConfig } from './company-provider-config.entity';
 
-@Entity('providers')
+@Entity('Provider')
 export class Provider {
   @PrimaryGeneratedColumn()
   id: number;
