@@ -1,61 +1,50 @@
-import { 
-  Entity, 
-  PrimaryColumn, 
-  Column, 
-  // ManyToOne, 
-  // JoinColumn, 
-  CreateDateColumn 
-} from 'typeorm';
-// import { Template } from '../../templates/entities/template.entity'; // Comenta esto
+import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import { NotificationChannel } from '../dto/send-notification.dto';
 
-export enum NotificationChannel {
-  EMAIL = 'EMAIL',
-  SMS = 'SMS',
-  WHATSAPP = 'WHATSAPP'
-}
-
+// Según tu base de datos, los estados son: SCHEDULED, PROCESSING, SENT, CANCELLED
 export enum ScheduledNotificationStatus {
   SCHEDULED = 'SCHEDULED',
   PROCESSING = 'PROCESSING',
   SENT = 'SENT',
-  CANCELLED = 'CANCELLED',
+  CANCELLED = 'CANCELLED'
+  // NOTA: No hay FAILED en tu base de datos para Scheduled_Notification
 }
 
 @Entity('Scheduled_Notification')
+@Index(['companyId', 'status'])
+@Index(['scheduledAt', 'status'])
 export class ScheduledNotification {
-  @PrimaryColumn({ type: 'char', length: 36 })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'char', length: 36 })
-  company_id: string;
+  @Column({ name: 'company_id', type: 'char', length: 36 })
+  companyId: string;
 
-  @Column({ type: 'char', length: 36 })
-  template_id: string;
+  @Column({ name: 'template_id', type: 'char', length: 36 })
+  templateId: string;
 
-  @Column({ type: 'enum', enum: NotificationChannel })
+  @Column({ 
+    type: 'enum', 
+    enum: NotificationChannel,
+    enumName: 'notification_channel_enum',
+    default: NotificationChannel.EMAIL 
+  })
   channel: NotificationChannel;
 
-  @Column({ type: 'varchar', length: 150 })
+  @Column({ length: 150 })
   recipient: string;
 
   @Column({ type: 'json', nullable: true })
-  variables: Record<string, any>;
+  variables: Record<string, any> | null;
 
-  @Column({ type: 'datetime' })
-  scheduled_at: Date;
+  @Column({ name: 'scheduled_at', type: 'datetime' })
+  scheduledAt: Date;
 
-  @Column({
-    type: 'enum',
+  @Column({ 
+    type: 'enum', 
     enum: ScheduledNotificationStatus,
-    default: ScheduledNotificationStatus.SCHEDULED,
+    enumName: 'scheduled_notification_status_enum',
+    default: ScheduledNotificationStatus.SCHEDULED 
   })
   status: ScheduledNotificationStatus;
-
-  @CreateDateColumn()
-  created_at: Date;
-
-  // COMENTA TEMPORALMENTE ESTA RELACIÓN
-  // @ManyToOne(() => Template, (template) => template.scheduled_notifications)
-  // @JoinColumn({ name: 'template_id' })
-  // template: Template;
 }

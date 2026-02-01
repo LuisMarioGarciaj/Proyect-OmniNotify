@@ -1,202 +1,98 @@
+// src/modules/notifications/notifications.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { NotificationLog } from './entities/notification-log.entity';
 import { SendNotificationDto } from './dto/send-notification.dto';
-
-// Enum para los estados (si no lo tienes)
-export enum NotificationLogStatus {
-  PENDING = 'PENDING',
-  SENT = 'SENT',
-  FAILED = 'FAILED',
-  DELIVERED = 'DELIVERED'
-}
+import { NotificationLog } from './entities/notification-log.entity'; // ✅ Singular
 
 @Injectable()
 export class NotificationsService {
+  sendNotification(data: SendNotificationDto) {
+    throw new Error('Method not implemented.');
+  }
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    @InjectQueue('notification-queue') 
-    private readonly notificationQueue: Queue,
-    
-    @InjectRepository(NotificationLog) 
-    private readonly logRepo: Repository<NotificationLog>,
+    @InjectQueue('notifications') private notificationsQueue: Queue,
+    @InjectRepository(NotificationLog) // ✅ Singular
+    private notificationLogsRepository: Repository<NotificationLog>, // ✅ Singular
   ) {}
 
-  async enqueueNotification(dto: SendNotificationDto) {
-    // Validar si es email
-    if (dto.channel === 'EMAIL') {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(dto.recipient)) {
-        throw new Error(`Email inválido: ${dto.recipient}`);
-      }
-    }
-
-    // 1. Crear log
-    const log = new NotificationLog();
-    log.company_id = dto.companyId;
-    log.channel = dto.channel;
-    log.recipient = dto.recipient;
-    log.status = NotificationLogStatus.PENDING;
+  async enqueueNotification(dto: SendNotificationDto): Promise<any> {
+    this.logger.log(`📨 Encolando notificación para: ${dto.recipient}`);
     
-    // ✅ SOLUCIÓN: Siempre asigna string o null
-    log.contact_id = dto.contactId || null;
-    
-    const savedLog = await this.logRepo.save(log);
-
-    // 2. Calcular delay si hay scheduledAt
     let delay = 0;
     if (dto.scheduledAt) {
-      const scheduledTime = new Date(dto.scheduledAt).getTime();
-      const now = Date.now();
-      delay = Math.max(0, scheduledTime - now);
+      const scheduledTime = new Date(dto.scheduledAt);
+      const now = new Date();
+      
+      if (scheduledTime <= now) {
+        throw new Error('La fecha programada debe ser futura');
+      }
+      
+      delay = scheduledTime.getTime() - now.getTime();
       
       if (delay > 30 * 24 * 60 * 60 * 1000) {
-        throw new Error('No se puede programar más de 30 días en el futuro');
+        throw new Error('La programación no puede exceder 30 días');
       }
+      
+      this.logger.log(`⏰ Programado para: ${scheduledTime.toLocaleString()}`);
     }
 
-    // 3. Encolar en BullMQ
-    const job = await this.notificationQueue.add(
-      'send-message',
-      { 
-        ...dto, 
-        logId: savedLog.id 
-      },
-      { 
-        jobId: savedLog.id,
-        delay,
+    const job = await this.notificationsQueue.add(
+      'send-notification',
+      dto,
+      {
+        delay: delay > 0 ? delay : 0,
         attempts: parseInt(process.env.QUEUE_ATTEMPTS || '3'),
-        backoff: { 
-          type: 'exponential', 
-          delay: parseInt(process.env.QUEUE_BACKOFF_DELAY || '1000') 
-        }
+        backoff: {
+          type: 'exponential',
+          delay: parseInt(process.env.QUEUE_BACKOFF_DELAY || '2000'),
+        },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+        jobId: delay > 0 ? `scheduled_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` : undefined,
       }
     );
 
-    // 4. Actualizar log con jobId - ✅ CORREGIDO: Usar update en lugar de save
-    await this.logRepo.update(savedLog.id, {
-      job_id: job.id || null // ✅ Asegurar que no sea undefined
-    });
-
-    this.logger.log(`Notificación encolada: ${dto.channel} a ${dto.recipient}`);
-
-    return { 
+    return {
       success: true,
-      jobId: job.id || null, // ✅ También aquí
-      logId: savedLog.id,
-      message: dto.scheduledAt ? 'Notificación programada' : 'Notificación encolada',
-      status: NotificationLogStatus.PENDING
+      jobId: job.id,
+      status: delay > 0 ? 'SCHEDULED' : 'QUEUED',
+      scheduledAt: delay > 0 ? new Date(Date.now() + delay).toISOString() : null,
+      timestamp: new Date().toISOString(),
+      queue: 'notifications',
     };
-  }
-
-  async getLogs(companyId?: string, limit: number = 50) {
-    const query = this.logRepo.createQueryBuilder('log');
-    
-    if (companyId) {
-      query.where('log.company_id = :companyId', { companyId });
-    }
-    
-    query.orderBy('log.created_at', 'DESC');
-    query.limit(limit);
-    
-    return await query.getMany();
   }
 
   async getStats(companyId: string) {
-    // Usar métodos de QueryBuilder para mayor compatibilidad
-    const query = this.logRepo.createQueryBuilder('log')
-      .where('log.company_id = :companyId', { companyId });
-    
-    const total = await query.getCount();
-    
-    const sent = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.status = :status', { 
-        companyId, 
-        status: NotificationLogStatus.SENT 
-      })
-      .getCount();
-    
-    const failed = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.status = :status', { 
-        companyId, 
-        status: NotificationLogStatus.FAILED 
-      })
-      .getCount();
-    
-    const pending = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.status = :status', { 
-        companyId, 
-        status: NotificationLogStatus.PENDING 
-      })
-      .getCount();
-    
-    const delivered = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.status = :status', { 
-        companyId, 
-        status: NotificationLogStatus.DELIVERED 
-      })
-      .getCount();
+    try {
+      // Obtener stats de la cola
+      const [waiting, active, completed, failed, delayed] = await Promise.all([
+        this.notificationsQueue.getWaitingCount(),
+        this.notificationsQueue.getActiveCount(),
+        this.notificationsQueue.getCompletedCount(),
+        this.notificationsQueue.getFailedCount(),
+        this.notificationsQueue.getDelayedCount(),
+      ]);
 
-    return {
-      total,
-      sent,
-      failed,
-      pending,
-      delivered,
-      successRate: total > 0 ? ((sent + delivered) / total * 100).toFixed(2) + '%' : '0%'
-    };
-  }
-
-  async findLogById(logId: string): Promise<NotificationLog | null> {
-    return await this.logRepo.findOne({ where: { id: logId } });
-  }
-
-  async findLogsByJobId(jobId: string): Promise<NotificationLog[]> {
-    return await this.logRepo.find({ where: { job_id: jobId } });
-  }
-
-  // Nuevo método específico para emails - CORREGIDO
-  async getEmailStats(companyId: string) {
-    // Usar QueryBuilder para evitar problemas de tipos
-    const total = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.channel = :channel', { 
-        companyId, 
-        channel: 'EMAIL' 
-      })
-      .getCount();
-    
-    const sent = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.channel = :channel AND log.status = :status', { 
-        companyId, 
-        channel: 'EMAIL',
-        status: NotificationLogStatus.SENT 
-      })
-      .getCount();
-    
-    const failed = await this.logRepo
-      .createQueryBuilder('log')
-      .where('log.company_id = :companyId AND log.channel = :channel AND log.status = :status', { 
-        companyId, 
-        channel: 'EMAIL',
-        status: NotificationLogStatus.FAILED 
-      })
-      .getCount();
-
-    return {
-      totalEmails: total,
-      sentEmails: sent,
-      failedEmails: failed,
-      successRate: total > 0 ? (sent / total * 100).toFixed(2) + '%' : '0%'
-    };
+      return {
+        companyId,
+        queueStats: {
+          waiting,
+          active,
+          completed,
+          failed,
+          delayed,
+          total: waiting + active + completed + failed + delayed,
+        },
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Error obteniendo stats:', error);
+      throw error;
+    }
   }
 }

@@ -1,5 +1,11 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn } from 'typeorm';
-import { NotificationChannel } from '../../templates/entities/template.entity';
+import { 
+  Entity, 
+  Column, 
+  PrimaryGeneratedColumn, 
+  CreateDateColumn,
+  Index 
+} from 'typeorm';
+import { NotificationChannel } from '../dto/send-notification.dto';
 
 export enum NotificationLogStatus {
   PENDING = 'PENDING',
@@ -9,32 +15,46 @@ export enum NotificationLogStatus {
 }
 
 @Entity('Notification_Logs')
+@Index(['companyId'])
+@Index(['contactId'])
+@Index(['jobId'])
+@Index(['status'])
+@Index(['createdAt'])
 export class NotificationLog {
-  @PrimaryColumn({ type: 'char', length: 36 })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'char', length: 36 })
-  company_id: string;
+  @Column({ name: 'company_id', type: 'char', length: 36 })
+  companyId: string;
 
-  @Column({ type: 'char', length: 36, nullable: true })
-  contact_id: string | null; // ← nullable
+  @Column({ name: 'contact_id', type: 'char', length: 36, nullable: true })
+  contactId: string | null;
 
-  @Column({ type: 'enum', enum: NotificationChannel })
+  @Column({ 
+    type: 'enum', 
+    enum: NotificationChannel,
+    enumName: 'notification_channel_enum'
+  })
   channel: NotificationChannel;
 
-  @Column({ type: 'varchar', length: 150 })
+  @Column({ length: 150 })
   recipient: string;
 
-  @Column({ type: 'enum', enum: NotificationLogStatus })
+  @Column({ 
+    type: 'enum', 
+    enum: NotificationLogStatus,
+    enumName: 'notification_log_status_enum',
+    default: NotificationLogStatus.PENDING 
+  })
   status: NotificationLogStatus;
 
-  @Column({ type: 'text', nullable: true })
-  error_message: string | null; // ← nullable
+  @Column({ name: 'error_message', type: 'text', nullable: true })
+  errorMessage: string | null;
 
-  // IMPORTANTE: job_id debe ser nullable
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  job_id: string | null; // ← AÑADE | null
+  // CORRECCIÓN: Especificar explícitamente el tipo de columna
+  @Column({ name: 'job_id', type: 'varchar', length: 100, nullable: true })
+  jobId: string | null;
 
-  @CreateDateColumn({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  created_at: Date;
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
 }
