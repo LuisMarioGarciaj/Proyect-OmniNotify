@@ -6,12 +6,10 @@ import {
   Delete,
   Param,
   Body,
-  Query,
 } from '@nestjs/common';
 import { ContactsService } from './contacts.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
-import { DEV_COMPANY_ID } from '../../common/constants/dev.constants';
 
 @Controller('contacts')
 export class ContactsController {
@@ -22,14 +20,9 @@ export class ContactsController {
     return this.contactsService.create(dto);
   }
 
-  /*@Get()
-  findAll(@Query('company_id') companyId: string) {
+  @Get('company/:companyId')
+  findAllByCompany(@Param('companyId') companyId: string) {
     return this.contactsService.findAll(companyId);
-  }*/
-  //Reemplazo momentaneo
-  @Get()
-  findAll() {
-    return this.contactsService.findAll(DEV_COMPANY_ID);
   }
 
   @Get(':id')

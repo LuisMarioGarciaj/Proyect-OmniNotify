@@ -1,17 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Tag as TagIcon, Edit2, Trash2, Filter, Search, AlertTriangle, X } from 'lucide-react';
+import { tagsService } from '../services/tags.service'; // Importamos el service
+import type { Tag } from '../types/tag';
+import { getCompanyId } from '../utils/auth.helpers';
 import TagForm from '../components/tags/TagForm';
 import TagChip from '../components/tags/TagChip';
-
-interface Tag {
-  id: string;
-  name: string;
-  company_id: string;
-  contacts_count?: number;
-  created_at?: string;
-}
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 const TagsPage: React.FC = () => {
   const [tags, setTags] = useState<Tag[]>([]);
@@ -20,58 +13,29 @@ const TagsPage: React.FC = () => {
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  
-  // Estados para el modal de confirmación
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [tagToDelete, setTagToDelete] = useState<Tag | null>(null);
 
-  useEffect(() => {
-    fetchTags();
-  }, []);
+  const companyId = getCompanyId();
 
-  const fetchTags = async () => {
+  const fetchTags = useCallback(async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${API_URL}/tags`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setTags(data);
-      }
+      const data = await tagsService.getAll(); 
+      setTags(data);
     } catch (error) {
       console.error('Error fetching tags:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []); // Quité companyId de aquí para evitar loops
 
   const handleCreateTag = async (tagData: { name: string }) => {
+    if (!companyId) return;
     try {
-      const token = localStorage.getItem('auth_token');
-      const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
-      
-      const response = await fetch(`${API_URL}/tags`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          ...tagData,
-          company_id: userData.company_id,
-        }),
-      });
-
-      if (response.ok) {
-        await fetchTags();
-        setShowForm(false);
-      }
+      await tagsService.create({ name: tagData.name, company_id: companyId });
+      await fetchTags();
+      setShowForm(false);
     } catch (error) {
       console.error('Error creating tag:', error);
     }
@@ -79,68 +43,36 @@ const TagsPage: React.FC = () => {
 
   const handleUpdateTag = async (tagId: string, tagData: { name: string }) => {
     try {
-      const token = localStorage.getItem('auth_token');
-      
-      const response = await fetch(`${API_URL}/tags/${tagId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(tagData),
-      });
-
-      if (response.ok) {
-        await fetchTags();
-        setEditingTag(null);
-      }
+      await tagsService.update(tagId, tagData.name);
+      await fetchTags();
+      setEditingTag(null);
     } catch (error) {
       console.error('Error updating tag:', error);
     }
   };
 
-  // Función para abrir el modal de confirmación
-  const openDeleteConfirmation = (tag: Tag) => {
-    setTagToDelete(tag);
-    setShowDeleteModal(true);
-  };
-
-  // Función para confirmar la eliminación
   const confirmDeleteTag = async () => {
     if (!tagToDelete) return;
-
     try {
-      const token = localStorage.getItem('auth_token');
-      
-      const response = await fetch(`${API_URL}/tags/${tagToDelete.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        await fetchTags();
-        // Opcional: Mostrar notificación de éxito
-        // console.log(`Tag "${tagToDelete.name}" eliminado correctamente`);
-      } else {
-        console.error('Failed to delete tag:', response.status);
-      }
+      await tagsService.delete(tagToDelete.id);
+      await fetchTags();
     } catch (error) {
       console.error('Error deleting tag:', error);
     } finally {
-      // Cerrar el modal
       setShowDeleteModal(false);
       setTagToDelete(null);
     }
   };
 
-  // Función para cancelar la eliminación
   const cancelDeleteTag = () => {
     setShowDeleteModal(false);
     setTagToDelete(null);
   };
-
+  
+  const openDeleteConfirmation = (tag: Tag) => {
+    setTagToDelete(tag);
+    setShowDeleteModal(true);
+  };
   const filteredTags = tags.filter(tag =>
     tag.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -367,4 +299,4 @@ const TagsPage: React.FC = () => {
   );
 };
 
-export default TagsPage;
+export default TagsPage;  

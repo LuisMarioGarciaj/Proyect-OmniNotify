@@ -8,6 +8,7 @@ export interface Contact {
   name?: string;
   email?: string;
   phone?: string;
-  tags?: Tag[];
+  tags?: Tag[];       
+  tag_ids?: string[]; 
   created_at: string;
 }

@@ -6,8 +6,6 @@ import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { Tag } from '../tags/entities/tag.entity';
 
-import { DEV_COMPANY_ID } from '../../common/constants/dev.constants';
-
 @Injectable()
 export class ContactsService {
   constructor(
@@ -20,15 +18,11 @@ export class ContactsService {
 
   async create(dto: CreateContactDto): Promise<Contact> {
     const contact = this.contactRepository.create(dto);
-
-    contact.company_id = DEV_COMPANY_ID;
-
     if (dto.tagIds?.length) {
       contact.tags = await this.tagRepository.findBy({
         id: dto.tagIds as any,
       });
     }
-
     return this.contactRepository.save(contact);
   }
 

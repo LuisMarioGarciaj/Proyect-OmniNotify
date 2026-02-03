@@ -1,6 +1,8 @@
+// src/pages/contacts/ContactsPage.tsx
 import React, { useEffect, useState } from 'react';
 import type { Contact } from '../../types/contact';
 import { getContacts } from '../../services/contacts.service';
+import { getCompanyId } from '../../utils/auth.helpers';
 import ContactsTable from './ContactsTable';
 import ContactForm from './ContactForm';
 
@@ -10,10 +12,20 @@ const ContactsPage: React.FC = () => {
   const [mode, setMode] = useState<'list' | 'create' | 'edit'>('list');
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
+  // ✅ Obtenemos el companyId una vez al montar
+  const companyId = getCompanyId();
+
   const loadContacts = async () => {
-  try {
+    // Si por alguna razón no hay companyId, no hacemos la petición
+    if (!companyId) {
+      console.error('❌ No se encontró company_id en user_data');
+      setLoading(false);
+      return;
+    }
+
+    try {
       setLoading(true);
-      const data = await getContacts();
+      const data = await getContacts(companyId); // ✅ pasamos companyId
       setContacts(data);
     } catch (error) {
       console.error('Error loading contacts:', error);
@@ -21,7 +33,6 @@ const ContactsPage: React.FC = () => {
       setLoading(false);
     }
   };
-  
 
   useEffect(() => {
     loadContacts();
@@ -48,6 +59,7 @@ const ContactsPage: React.FC = () => {
       {(mode === 'create' || mode === 'edit') && (
         <ContactForm
           contact={selectedContact}
+          companyId={companyId!}  
           onCancel={() => {
             setSelectedContact(null);
             setMode('list');

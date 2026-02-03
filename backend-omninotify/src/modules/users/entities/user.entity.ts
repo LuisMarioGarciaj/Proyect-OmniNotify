@@ -1,7 +1,7 @@
 // src/modules/users/entities/user.entity.ts
 import { Entity, PrimaryColumn, Column } from 'typeorm';
 
-@Entity('User')  // ← Nombre EXACTO de la tabla en MySQL
+@Entity('User')  
 export class User {
   @PrimaryColumn('char', { length: 36 })
   id: string;  // ← char(36) es string

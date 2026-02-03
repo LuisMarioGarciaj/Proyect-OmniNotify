@@ -2,56 +2,43 @@ import type { Contact } from '../types/contact';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
-export async function getContacts(): Promise<Contact[]> {
-  const res = await fetch(`${API_URL}/contacts`, {
-    headers: {
-      'Content-Type': 'application/json',
-      // JWT luego
-    },
+const getHeaders = () => ({
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${localStorage.getItem('auth_token')}`, 
+});
+
+export async function getContacts(companyId: string): Promise<Contact[]> {
+  const res = await fetch(`${API_URL}/contacts/company/${companyId}`, {
+    headers: getHeaders(),
   });
-
-  if (!res.ok) {
-    throw new Error('Error fetching contacts');
-  }
-
+  if (!res.ok) throw new Error('Error fetching contacts');
   return res.json();
 }
 
-export async function createContact(data: Partial<Contact>) {
+export async function createContact(companyId: string, data: Partial<Contact>) {
   const res = await fetch(`${API_URL}/contacts`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    headers: getHeaders(),
+    body: JSON.stringify({ ...data, company_id: companyId }),
   });
-
-  if (!res.ok) {
-    throw new Error('Error creating contact');
-  }
-
+  if (!res.ok) throw new Error('Error creating contact');
   return res.json();
 }
 
 export async function updateContact(id: string, data: Partial<Contact>) {
   const res = await fetch(`${API_URL}/contacts/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    headers: getHeaders(),
+    body: JSON.stringify(data), 
   });
-
-  if (!res.ok) {
-    throw new Error('Error updating contact');
-  }
-
+  if (!res.ok) throw new Error('Error updating contact');
   return res.json();
 }
 
 export async function deleteContact(id: string) {
   const res = await fetch(`${API_URL}/contacts/${id}`, {
     method: 'DELETE',
+    headers: getHeaders(),
   });
-
-  if (!res.ok) {
-    throw new Error('Error deleting contact');
-  }
+  if (!res.ok) throw new Error('Error deleting contact');
 }
- 

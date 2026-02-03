@@ -1,9 +1,12 @@
 // src/modules/users/users.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ConflictException, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid';
 import { User } from './entities/user.entity';
+import { Company, CompanyStatus } from '../companies/entities/company.entity';
+import { CreateUserDto } from './dto/create-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -12,6 +15,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly dataSource: DataSource,
   ) {
     this.testConnection();
   }
@@ -20,57 +24,76 @@ export class UsersService {
     try {
       const count = await this.userRepo.count();
       this.logger.log(`✅ CONEXIÓN EXITOSA con la base de datos`);
-      this.logger.log(`📊 Total de usuarios encontrados: ${count}`);
-      
-      if (count > 0) {
-        const users = await this.userRepo.find({
-          select: ['id', 'email', 'name', 'role', 'status'],
-          take: 5, // Muestra solo los primeros 5
-        });
-        this.logger.log(`👥 Primeros usuarios:`);
-        users.forEach(user => {
-          this.logger.log(`   - ${user.email} (${user.name}) [${user.role}]`);
-        });
-      }
     } catch (error) {
       this.logger.error(`❌ ERROR de conexión a la BD: ${error.message}`);
     }
   }
 
-  async findByEmail(email: string) {
-    this.logger.log(`🔍 Buscando usuario con email: ${email}`);
-    const user = await this.userRepo.findOne({
-      where: { email },
-    });
-    
-    if (user) {
-      this.logger.log(`✅ Usuario encontrado: ${user.name} (${user.email})`);
-    } else {
-      this.logger.warn(`⚠️ Usuario NO encontrado con email: ${email}`);
+  async createWithCompany(createUserDto: CreateUserDto) {
+    const { email, password, name, role } = createUserDto;
+
+    const existingUser = await this.findByEmail(email);
+    if (existingUser) {
+      throw new ConflictException('El correo electrónico ya está registrado');
     }
-    
-    return user;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 1. Crear la Compañía
+      const companyId = uuidv4();
+      
+      // Creamos el objeto usando la clase para que tome los defaults
+      const companyInstance = queryRunner.manager.create(Company, {
+        id: companyId,
+        name: `Empresa de ${name}`,
+        status: CompanyStatus.ACTIVE,
+        // Usamos "as any" para evitar que el modo estricto moleste con el null/undefined
+        logo: null as any, 
+        api_keys_config: null as any
+      });
+
+      await queryRunner.manager.save(companyInstance);
+
+      // 2. Crear el Usuario
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      const userInstance = queryRunner.manager.create(User, {
+        id: uuidv4(),
+        company_id: companyId,
+        name,
+        email,
+        password: hashedPassword,
+        role: role || 'OPERATOR',
+        status: 'ACTIVE'
+      });
+
+      const savedUser = await queryRunner.manager.save(userInstance);
+      
+      await queryRunner.commitTransaction();
+      
+      const { password: _, ...result } = savedUser;
+      return result;
+
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`❌ Error en registro: ${error.message}`);
+      throw new InternalServerErrorException('Error al procesar el registro');
+    } finally {
+      await queryRunner.release();
+    }
   }
 
-  // src/modules/users/users.service.ts
-async validatePassword(password: string, storedPassword: string) {
-    this.logger.log(`🔐 Validando contraseña...`);
-    this.logger.log(`🔐 Contraseña recibida: ${password}`);
-    this.logger.log(`🔐 Contraseña almacenada (primeros 10 chars): ${storedPassword.substring(0, 10)}...`);
-    
-    // Si la contraseña almacenada NO está hasheada (no empieza con $2b$)
+  async findByEmail(email: string) {
+    return await this.userRepo.findOne({ where: { email } });
+  }
+
+  async validatePassword(password: string, storedPassword: string) {
     if (!storedPassword.startsWith('$2b$') && !storedPassword.startsWith('$2a$')) {
-        this.logger.log(`🔐 Contraseña en texto plano detectada, comparando directamente`);
-        // Comparación directa (para desarrollo)
-        const isValid = password === storedPassword;
-        this.logger.log(`🔐 Validación: ${isValid ? '✅ CORRECTA' : '❌ INCORRECTA'}`);
-        return isValid;
+        return password === storedPassword;
     }
-    
-    // Si está hasheada, usa bcrypt
-    this.logger.log(`🔐 Contraseña hasheada detectada, usando bcrypt`);
-    const isValid = await bcrypt.compare(password, storedPassword);
-    this.logger.log(`🔐 Validación bcrypt: ${isValid ? '✅ CORRECTA' : '❌ INCORRECTA'}`);
-    return isValid;
-}
+    return await bcrypt.compare(password, storedPassword);
+  }
 }

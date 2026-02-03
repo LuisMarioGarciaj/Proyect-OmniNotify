@@ -11,7 +11,8 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Tag
+  Tag,
+  Building // Icono para Company
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -31,6 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/dashboard' },
+    { id: 'company', label: 'Company', icon: <Building size={20} />, path: '/company' }, // Nueva Opción
     { id: 'templates', label: 'Templates', icon: <Mail size={20} />, path: '/templates' },
     { id: 'contacts', label: 'Contacts', icon: <Users size={20} />, path: '/contacts' },
     { id: 'tags', label: 'Tags', icon: <Tag size={20} />, path: '/tags' },
@@ -62,7 +64,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
       </div>
 
       {/* Sidebar for Desktop */}
-      <div className={`hidden lg:block fixed left-0 top-0 h-screen bg-white shadow-lg transition-all duration-300 ${sidebarOpen ? 'w-64' : 'w-20'}`}>
+      <div className={`hidden lg:block fixed left-0 top-0 h-screen bg-white shadow-lg transition-all duration-300 z-40 ${sidebarOpen ? 'w-64' : 'w-20'}`}>
         {/* Header con botón de toggle */}
         <div className="p-4 border-b flex items-center justify-between">
           <div className="flex items-center">
@@ -83,7 +85,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
         </div>
         
         {/* Menu Items */}
-        <div className="p-4">
+        <div className="p-4 h-[calc(100vh-180px)] overflow-y-auto custom-scrollbar">
           <nav className="space-y-2">
             {menuItems.map((item) => (
               <NavLink
@@ -114,16 +116,16 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
         </div>
         
         {/* Footer del Sidebar */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t bg-white">
           {/* User info */}
           <div className="flex items-center p-3">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold">
+            <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold">
               {user?.name?.charAt(0) || 'U'}
             </div>
             {sidebarOpen && (
               <div className="ml-3 flex-1 min-w-0">
-                <p className="font-medium text-gray-800 truncate">{user?.name || 'User'}</p>
-                <p className="text-sm text-gray-600 truncate">{user?.email || ''}</p>
+                <p className="font-medium text-gray-800 truncate text-sm">{user?.name || 'User'}</p>
+                <p className="text-xs text-gray-600 truncate">{user?.email || ''}</p>
               </div>
             )}
             {!sidebarOpen && (
@@ -154,7 +156,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
         <div className="hidden lg:block fixed left-0 top-1/2 transform -translate-y-1/2 z-30">
           <button
             onClick={toggleSidebar}
-            className="ml-2 p-2 bg-white shadow-lg rounded-r-lg hover:bg-gray-50 transition"
+            className="ml-2 p-2 bg-white shadow-lg rounded-r-lg hover:bg-gray-50 transition border border-l-0"
             title="Expand sidebar"
           >
             <ChevronRight size={20} />
@@ -164,9 +166,9 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
 
       {/* Mobile Sidebar */}
       {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 z-40">
-          <div className="fixed inset-0 bg-black bg-opacity-50" onClick={() => setMobileMenuOpen(false)} />
-          <div className="fixed left-0 top-0 h-full w-64 bg-white shadow-lg">
+        <div className="lg:hidden fixed inset-0 z-50">
+          <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" onClick={() => setMobileMenuOpen(false)} />
+          <div className="fixed left-0 top-0 h-full w-64 bg-white shadow-lg animate-in slide-in-from-left duration-300">
             <div className="p-6 border-b flex items-center justify-between">
               <div className="flex items-center">
                 <LayoutDashboard className="text-blue-600" size={28} />
@@ -180,7 +182,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
               </button>
             </div>
             
-            <div className="p-4">
+            <div className="p-4 overflow-y-auto h-[calc(100vh-80px)]">
               <nav className="space-y-2">
                 {menuItems.map((item) => (
                   <NavLink

@@ -1,19 +1,13 @@
-// import { Module } from '@nestjs/common';
-// import { DatabaseModule } from './database/database.module';
-// import { AppController } from './app.controller';
-// import { AppService } from './app.service';
-// import { AuthModule } from './modules/auth/auth.module';
-// import { UsersModule } from './modules/users/users.module';
-// import { CompaniesModule } from './modules/companies/companies.module'; 
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Company } from './entities/company.entity';
+import { CompaniesService } from './companies.service';
+import { CompaniesController } from './companies.controller';
 
-// @Module({
-//   imports: [
-//     DatabaseModule,
-//     AuthModule,
-//     UsersModule,
-//     CompaniesModule, 
-//   ],
-//   controllers: [AppController],
-//   providers: [AppService],
-// })
-// export class AppModule {}
+@Module({
+  imports: [TypeOrmModule.forFeature([Company])],
+  providers: [CompaniesService],
+  controllers: [CompaniesController],
+  exports: [CompaniesService], // Exportamos por si otros módulos lo necesitan
+})
+export class CompaniesModule {}

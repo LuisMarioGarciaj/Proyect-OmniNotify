@@ -152,17 +152,11 @@ const LoginForm: React.FC = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoginMessage('');
-
-        if (!validateForm()) {
-            return;
-        }
+        if (!validateForm()) return;
 
         setIsLoading(true);
 
         try {
-            console.log(`📡 Enviando login a: ${API_BASE_URL}/auth/login`);
-            
-            // Llamada REAL a tu API NestJS
             const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: 'POST',
                 headers: {
@@ -178,47 +172,54 @@ const LoginForm: React.FC = () => {
             const data = await response.json();
 
             if (!response.ok) {
-                // Error del servidor (401, 500, etc.)
-                throw new Error(data.message || t.invalidCredentials);
+                // Manejo de errores controlados del backend (401, 404, etc.)
+                if (data.access_token) {
+                console.warn("⚠️ Error secundario del servidor:", data.message);
+                } else {
+                    // Si NO hay token, entonces sí es un error de login real
+                    throw new Error(data.message || t.invalidCredentials);
+                }
             }
 
-            // ÉXITO: Guardar token y datos del usuario
+            // --- LÓGICA DE ÉXITO UNIFICADA ---
             console.log('✅ Login exitoso:', data);
-            
-            // Guardar el token JWT
+
+            // 1. Guardar Token
             localStorage.setItem('auth_token', data.access_token);
-            if (data.user) {
-                localStorage.setItem('user_data', JSON.stringify(data.user));
-            }
-            
-            // Guardar credenciales si "Recordarme" está activado
+
+            // 2. Guardar Usuario (con fallback por si la estructura varía)
+            const userData = data.user || {
+                id: data.id,
+                email: data.email,
+                name: data.name,
+                role: data.role,
+                company_id: data.company_id
+            };
+            localStorage.setItem('user_data', JSON.stringify(userData));
+
+            // 3. Recordar Email
             if (formData.rememberMe) {
                 localStorage.setItem('remembered_email', formData.email);
             } else {
                 localStorage.removeItem('remembered_email');
             }
-            
+
             setMessageType('success');
             setLoginMessage(t.loginSuccess);
-            
-            // Redirigir después de 2 segundos - CAMBIA ESTO:
+
             setTimeout(() => {
-                navigate('/dashboard'); // <-- CAMBIADO: de window.location.href a navigate
+                navigate('/dashboard');
             }, 1000);
 
         } catch (error: any) {
             console.error('❌ Error en login:', error);
-            
             setMessageType('error');
-            
-            // Mostrar mensaje específico según el error
+
             if (error.message === 'Failed to fetch') {
                 setLoginMessage(`${t.apiError}: ${API_BASE_URL}`);
-                console.error(`🔌 Verifica que el backend esté corriendo en: ${API_BASE_URL}`);
             } else {
                 setLoginMessage(error.message || t.loginError);
             }
-            
         } finally {
             setIsLoading(false);
         }

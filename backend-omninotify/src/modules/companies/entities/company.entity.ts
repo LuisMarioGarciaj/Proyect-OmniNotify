@@ -22,9 +22,12 @@ export class Company {
   })
   status: CompanyStatus;
 
+  @Column({ type: 'longtext', nullable: true })
+  logo: string | null; // Guardará el base64
+
   // Este campo lo tienes en el ERD original, es útil para configuraciones globales
   @Column({ type: 'json', nullable: true })
-  api_keys_config: Record<string, any>;
+  api_keys_config: Record<string, any> | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
