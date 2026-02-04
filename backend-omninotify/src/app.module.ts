@@ -11,6 +11,8 @@ import { ContactsModule } from './modules/contacts/contacts.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { TemplatesModule } from './modules/templates/templates.module';
+import { CompaniesModule } from './modules/companies/companies.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module'; 
 
 @Module({
   imports: [
@@ -55,6 +57,8 @@ import { TemplatesModule } from './modules/templates/templates.module';
     ContactsModule,
     TemplatesModule,
     NotificationsModule,
+    CompaniesModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

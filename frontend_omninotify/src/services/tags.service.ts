@@ -2,46 +2,64 @@ import type { Tag } from '../types/tag';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
-const getHeaders = () => ({
-  'Content-Type': 'application/json',
-  'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-});
+function getAuthHeaders() {
+  const token = localStorage.getItem('auth_token');
+
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
 
 export const tagsService = {
-  // GET original: traía todo de /tags
-  async getAll(): Promise<Tag[]> {
-    const response = await fetch(`${API_URL}/tags`, {
-      headers: getHeaders(),
+  async getAll() {
+    const res = await fetch(`${API_URL}/tags`, {
+      headers: getAuthHeaders(),
     });
-    if (!response.ok) throw new Error('Error fetching tags');
-    return response.json();
+
+    if (!res.ok) {
+      throw new Error('Error fetching tags');
+    }
+
+    return res.json();
   },
 
-  async create(tagData: { name: string; company_id: string }): Promise<Tag> {
-    const response = await fetch(`${API_URL}/tags`, {
+  async create(data: any) {
+    const res = await fetch(`${API_URL}/tags`, {
       method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(tagData),
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
     });
-    if (!response.ok) throw new Error('Error creating tag');
-    return response.json();
+
+    if (!res.ok) {
+      throw new Error('Error creating tag');
+    }
+
+    return res.json();
   },
 
-  async update(id: string, name: string): Promise<Tag> {
-    const response = await fetch(`${API_URL}/tags/${id}`, {
+  async update(id: string, name: string) {
+    const res = await fetch(`${API_URL}/tags/${id}`, {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getAuthHeaders(),
       body: JSON.stringify({ name }),
     });
-    if (!response.ok) throw new Error('Error updating tag');
-    return response.json();
+
+    if (!res.ok) {
+      throw new Error('Error updating tag');
+    }
+
+    return res.json();
   },
 
-  async delete(id: string): Promise<void> {
-    const response = await fetch(`${API_URL}/tags/${id}`, {
+  async delete(id: string) {
+    const res = await fetch(`${API_URL}/tags/${id}`, {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: getAuthHeaders(),
     });
-    if (!response.ok) throw new Error('Error deleting tag');
+
+    if (!res.ok) {
+      throw new Error('Error deleting tag');
+    }
   },
 };

@@ -28,7 +28,11 @@ const TagsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []); // Quité companyId de aquí para evitar loops
+  }, []); 
+
+  useEffect(() => {
+    fetchTags();
+  }, [fetchTags]);
 
   const handleCreateTag = async (tagData: { name: string }) => {
     if (!companyId) return;

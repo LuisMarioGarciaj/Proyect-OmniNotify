@@ -10,4 +10,4 @@ import { CompaniesController } from './companies.controller';
   controllers: [CompaniesController],
   exports: [CompaniesService], // Exportamos por si otros módulos lo necesitan
 })
-export class CompaniesModule {}
+export class CompaniesModule {} 

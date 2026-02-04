@@ -25,7 +25,7 @@ const ContactsPage: React.FC = () => {
 
     try {
       setLoading(true);
-      const data = await getContacts(companyId); // ✅ pasamos companyId
+      const data = await getContacts(companyId); 
       setContacts(data);
     } catch (error) {
       console.error('Error loading contacts:', error);
