@@ -12,11 +12,13 @@ import { WhatsappController } from './controllers/whatsapp.controller';
 import { NotificationsService } from './notifications.service';
 import { TemplatesModule } from '../templates/templates.module';
 import { NotificationProcessor } from './processors/notification.processor';
+import { SmsController } from './controllers/sms.controller'; 
 
 // Proveedores
 import { EmailProvider } from './providers/email.provider';
 import { WhatsappProvider } from './providers/whatsapp/whatsapp.provider'; 
 import { NexoWhatsappProvider } from './providers/nexo-whatsapp.provider';
+import { SMSProvider } from './providers/sms/sms.provider';
 
 // Entidades (Asegúrate de que las rutas sean correctas)
 import { CompanyProviderConfig } from '../providers/entities/company-provider-config.entity'; 
@@ -58,6 +60,7 @@ import { Template } from '../templates/entities/template.entity';
     NotificationsController,
     EmailController,
     WhatsappController,
+    SmsController,
   ],
   providers: [
     NotificationsService,
@@ -65,12 +68,14 @@ import { Template } from '../templates/entities/template.entity';
     EmailProvider,
     WhatsappProvider,
     NexoWhatsappProvider,
+    SMSProvider,
   ],
   exports: [
     NotificationsService,
     EmailProvider,
     WhatsappProvider,
     NexoWhatsappProvider,
+    SMSProvider,
   ],
 })
 export class NotificationsModule {}

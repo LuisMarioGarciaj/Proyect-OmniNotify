@@ -11,7 +11,7 @@ import NotificationsPage from './pages/Notifications';
 import ProfilePage from './pages/Profile';
 import EmailConfiguration from './pages/EmailConfiguration';
 import CompanyPage from "./pages/company/CompanyPage"; // Asegúrate de que la ruta del archivo sea correcta
-
+import SMSConfiguration from './pages/SMSConfiguration';
 function App() {
   // Obtenemos los datos del usuario guardados al iniciar sesión
   const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
@@ -42,6 +42,7 @@ function App() {
           
           {/* Configuración de Email usando el ID dinámico del usuario logueado */}
           <Route path="email-configuration" element={<EmailConfiguration companyId={companyId} />} />
+          <Route path="sms-configuration" element={<SMSConfiguration companyId="25a63d10-eff4-11f0-86e6-a2aaf909b30d" />} />
         </Route>
         
         <Route path="*" element={<Navigate to="/login" replace />} />

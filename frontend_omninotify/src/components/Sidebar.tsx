@@ -12,7 +12,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Tag,
-  Building // Icono para Company
+  Building ,
+  MessageSquare
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -38,6 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
     { id: 'tags', label: 'Tags', icon: <Tag size={20} />, path: '/tags' },
     { id: 'notifications', label: 'Send Notifications', icon: <Bell size={20} />, path: '/notifications' },
     { id: 'profile', label: 'Profile', icon: <User size={20} />, path: '/profile' },
+    { id: 'sms-config', label: 'Configuración SMS', icon: <MessageSquare size={20} />,path: '/sms-configuration'},
   ];
 
   const handleLogout = () => {

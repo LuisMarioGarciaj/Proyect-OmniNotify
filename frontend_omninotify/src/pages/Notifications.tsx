@@ -6,7 +6,7 @@ import {
   User, Mail as MailIcon, Filter, Plus,
   Calendar, Clock, Search, X, ChevronRight, Check,
   Users as UsersIcon, Eye as EyeIcon, Zap,
-  Bell
+  Bell, Phone
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -52,7 +52,7 @@ interface Variables {
 
 const NotificationsSend: React.FC = () => {
   const navigate = useNavigate();
-  
+
   // Estados para datos
   const [templates, setTemplates] = useState<Template[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -62,29 +62,29 @@ const NotificationsSend: React.FC = () => {
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [selectedRecipientType, setSelectedRecipientType] = useState<'individual' | 'group' | 'manual'>('individual');
   const [manualRecipients, setManualRecipients] = useState<string[]>(['hmauri2000@gmail.com']);
-  
+
   // Estados para UI
   const [loading, setLoading] = useState(true);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [message, setMessage] = useState<{text: string; type: 'success' | 'error' | 'info'} | null>(null);
-  
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
   // Estados para modales
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showContactsModal, setShowContactsModal] = useState(false);
   const [showGroupsModal, setShowGroupsModal] = useState(false);
-  
+
   // Estados para búsqueda
   const [searchTemplateTerm, setSearchTemplateTerm] = useState('');
   const [searchContactTerm, setSearchContactTerm] = useState('');
   const [searchGroupTerm, setSearchGroupTerm] = useState('');
-  
+
   // Estados para programación
   const [scheduleType, setScheduleType] = useState<'now' | 'later'>('now');
   const [scheduleDate, setScheduleDate] = useState<string>('');
   const [scheduleTime, setScheduleTime] = useState<string>('');
-  
+
   // Variables para template
   const [variables, setVariables] = useState<Variables>({
     nombre: 'Juan Pérez',
@@ -98,12 +98,23 @@ const NotificationsSend: React.FC = () => {
     numeroFactura: 'INV-2024-001'
   });
 
+  // Helper para obtener contacto por valor
+  const getContactByValue = (value: string): Contact | undefined => {
+    if (!selectedTemplate) return undefined;
+    
+    if (selectedTemplate.channel === 'SMS') {
+      return contacts.find(c => c.phone === value);
+    } else {
+      return contacts.find(c => c.email === value);
+    }
+  };
+
   // Inicializar fechas para programación
   useEffect(() => {
     const today = new Date();
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
+
     // Formatear fecha como YYYY-MM-DD para input date
     setScheduleDate(tomorrow.toISOString().split('T')[0]);
     setScheduleTime('09:00');
@@ -115,16 +126,16 @@ const NotificationsSend: React.FC = () => {
     try {
       const companyId = '25a63d10-eff4-11f0-86e6-a2aaf909b30d';
       const response = await axios.get(`${API_BASE_URL}/templates/company/${companyId}`);
-      
+
       let templatesData: Template[] = [];
       if (response.data && Array.isArray(response.data)) {
         templatesData = response.data;
       } else if (response.data?.data && Array.isArray(response.data.data)) {
         templatesData = response.data.data;
       }
-      
+
       setTemplates(templatesData);
-      
+
       // Seleccionar primer template de EMAIL
       const emailTemplate = templatesData.find(t => t.channel === 'EMAIL');
       if (emailTemplate) {
@@ -146,24 +157,33 @@ const NotificationsSend: React.FC = () => {
       const response = await axios.get(`${API_BASE_URL}/contacts`);
       const contactsData = Array.isArray(response.data) ? response.data : response.data?.data || [];
       setContacts(contactsData);
-      
-      // Si hay contactos, agregar los emails a seleccionados
+
+      // Si hay contactos, agregar los emails/phones según el template seleccionado
       if (contactsData.length > 0 && selectedRecipientType === 'individual') {
-        const emails = contactsData
-          .slice(0, 3)
-          .filter((c: Contact) => c.email)
-          .map((c: Contact) => c.email);
-        setSelectedContacts(['hmauri2000@gmail.com', ...emails]);
+        if (selectedTemplate) {
+          const selectedValues = contactsData
+            .slice(0, 3)
+            .filter((c: Contact) => {
+              if (selectedTemplate.channel === 'SMS') {
+                return c.phone && c.phone.trim() !== '';
+              } else {
+                return c.email && c.email.trim() !== '';
+              }
+            })
+            .map((c: Contact) => selectedTemplate.channel === 'SMS' ? c.phone : c.email);
+          
+          setSelectedContacts(['hmauri2000@gmail.com', ...selectedValues]);
+        }
       }
     } catch (error: any) {
       console.error('Error cargando contactos:', error);
-      // Datos de ejemplo
+      // Datos de ejemplo mejorados
       const exampleContacts: Contact[] = [
-        { id: '1', name: 'Juan Pérez', email: 'juan@ejemplo.com', phone: '+1234567890', company_id: '1', tags: ['VIP', 'Cliente'] },
-        { id: '2', name: 'María García', email: 'maria@ejemplo.com', phone: '+0987654321', company_id: '1', tags: ['Nuevo'] },
-        { id: '3', name: 'Carlos Rodríguez', email: 'carlos@ejemplo.com', phone: '+5678901234', company_id: '1', tags: ['Recurrente'] },
-        { id: '4', name: 'Ana López', email: 'ana@ejemplo.com', phone: '+4321098765', company_id: '1', tags: ['VIP'] },
-        { id: '5', name: 'Pedro Martínez', email: 'pedro@ejemplo.com', phone: '+6789012345', company_id: '1', tags: ['Inactivo'] },
+        { id: '1', name: 'Juan Pérez', email: 'juan@ejemplo.com', phone: '+59170797542', company_id: '1', tags: ['VIP', 'Cliente'] },
+        { id: '2', name: 'María García', email: 'maria@ejemplo.com', phone: '+59170797543', company_id: '1', tags: ['Nuevo'] },
+        { id: '3', name: 'Carlos Rodríguez', email: 'carlos@ejemplo.com', phone: '+59170797544', company_id: '1', tags: ['Recurrente'] },
+        { id: '4', name: 'Ana López', email: 'ana@ejemplo.com', phone: '+59170797545', company_id: '1', tags: ['VIP'] },
+        { id: '5', name: 'Pedro Martínez', email: 'pedro@ejemplo.com', phone: '+59170797546', company_id: '1', tags: ['Inactivo'] },
       ];
       setContacts(exampleContacts);
     }
@@ -206,7 +226,35 @@ const NotificationsSend: React.FC = () => {
   // Función para convertir fecha local a UTC string
   const localToUTCString = (dateStr: string, timeStr: string): string => {
     const localDate = new Date(`${dateStr}T${timeStr}`);
-    return localDate.toISOString(); // Esto convierte a UTC
+    return localDate.toISOString();
+  };
+
+  // Formatear número de teléfono para mostrar
+  const formatPhoneForDisplay = (phone: string): string => {
+    if (!phone) return '';
+    
+    // Eliminar el + y el código de país para formatear
+    const cleaned = phone.replace(/\D/g, '');
+    
+    if (cleaned.startsWith('591')) {
+      // Formato Bolivia: +591 70797542
+      return `+${cleaned.substring(0, 3)} ${cleaned.substring(3)}`;
+    } else if (cleaned.startsWith('52')) {
+      // Formato México: +52 55 1234 5678
+      const rest = cleaned.substring(2);
+      if (rest.length === 10) {
+        return `+52 ${rest.substring(0, 2)} ${rest.substring(2, 6)} ${rest.substring(6)}`;
+      }
+    } else if (cleaned.startsWith('1')) {
+      // Formato USA/Canadá: +1 (234) 567-8900
+      const areaCode = cleaned.substring(1, 4);
+      const prefix = cleaned.substring(4, 7);
+      const lineNumber = cleaned.substring(7);
+      return `+1 (${areaCode}) ${prefix}-${lineNumber}`;
+    }
+    
+    // Formato genérico
+    return phone;
   };
 
   // Enviar notificaciones
@@ -235,42 +283,6 @@ const NotificationsSend: React.FC = () => {
     setResult(null);
 
     try {
-      // Reemplazar variables
-      const finalContent = replaceVariables(selectedTemplate.content, variables);
-      const subject = `${selectedTemplate.name}`;
-
-      // Preparar HTML
-      const htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>${subject}</title>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f4f4f4; }
-            .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; }
-            .content { padding: 30px; }
-            .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>${subject}</h1>
-            </div>
-            <div class="content">
-              ${finalContent.replace(/\n/g, '<br>')}
-            </div>
-            <div class="footer">
-              <p>© ${new Date().getFullYear()} OmniNotify. Email enviado automáticamente.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `;
-
       // Obtener todos los destinatarios según el tipo seleccionado
       let recipients: string[] = [];
       if (selectedRecipientType === 'individual' || selectedRecipientType === 'manual') {
@@ -282,11 +294,10 @@ const NotificationsSend: React.FC = () => {
       // Si es programado, crear fecha de programación en UTC
       let scheduleDateTime: string | undefined;
       if (scheduleType === 'later') {
-        // Convertir fecha/hora local a UTC
         scheduleDateTime = localToUTCString(scheduleDate, scheduleTime);
         const scheduledTime = new Date(scheduleDateTime);
         const now = new Date();
-        
+
         if (scheduledTime <= now) {
           showMessage('La fecha programada debe ser futura', 'error');
           setSending(false);
@@ -294,37 +305,122 @@ const NotificationsSend: React.FC = () => {
         }
       }
 
-      // Para cada destinatario, enviar email con programación si corresponde
+      // Determinar el endpoint según el canal
+      const isSmsChannel = selectedTemplate.channel === 'SMS';
+      const isWhatsAppChannel = selectedTemplate.channel === 'WHATSAPP';
+
+      // Procesar cada destinatario
       const promises = recipients.map(async (recipient) => {
         try {
-          const payload = {
-            to: recipient,
-            subject: subject,
-            html: htmlContent,
-            text: finalContent,
-            templateId: selectedTemplate.id,
-            companyId: selectedTemplate.company_id,
-            companyName: variables.empresa,
-            variables: variables,
-            ...(scheduleDateTime && { schedule: scheduleDateTime })
-          };
+          let payload;
 
-          // Usar el endpoint que maneja tanto inmediatos como programados
-          const response = await axios.post(`${API_BASE_URL}/email/send-notification`, payload);
-          
-          return {
-            recipient,
-            success: response.data.success,
-            data: response.data.data,
-            scheduled: scheduleDateTime ? true : false
-          };
+          if (isSmsChannel) {
+            // Preparar payload para SMS
+            const textContent = replaceVariables(selectedTemplate.content, variables);
+
+            payload = {
+              to: recipient,
+              text: textContent,
+              templateId: selectedTemplate.id,
+              companyId: selectedTemplate.company_id,
+              variables: variables,
+              provider: 'vonage',
+              config: {
+                apiKey: '84a24d93',
+                apiSecret: '46Xump31CGyK88hf',
+                fromNumber: 'OmniNotify'
+              },
+              ...(scheduleDateTime && { schedule: scheduleDateTime })
+            };
+
+            // Usar el endpoint de SMS
+            const endpoint = scheduleDateTime
+              ? `${API_BASE_URL}/sms/send`
+              : `${API_BASE_URL}/sms/send-direct`;
+
+            const response = await axios.post(endpoint, payload);
+
+            return {
+              recipient,
+              success: response.data.success,
+              data: response.data.data,
+              scheduled: !!scheduleDateTime,
+              channel: 'SMS'
+            };
+
+          } else if (isWhatsAppChannel) {
+            // WhatsApp (implementar más adelante)
+            throw new Error('WhatsApp no implementado aún');
+
+          } else {
+            // Preparar payload para EMAIL
+            const finalContent = replaceVariables(selectedTemplate.content, variables);
+            const subject = `${selectedTemplate.name}`;
+
+            const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>${subject}</title>
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f4f4f4; }
+                .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; }
+                .content { padding: 30px; }
+                .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>${subject}</h1>
+                </div>
+                <div class="content">
+                  ${finalContent.replace(/\n/g, '<br>')}
+                </div>
+                <div class="footer">
+                  <p>© ${new Date().getFullYear()} OmniNotify. Email enviado automáticamente.</p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `;
+
+            payload = {
+              to: recipient,
+              subject: subject,
+              html: htmlContent,
+              text: finalContent,
+              templateId: selectedTemplate.id,
+              companyId: selectedTemplate.company_id,
+              companyName: variables.empresa,
+              variables: variables,
+              ...(scheduleDateTime && { schedule: scheduleDateTime })
+            };
+
+            // Usar el endpoint de email
+            const endpoint = `${API_BASE_URL}/email/send-notification`;
+            const response = await axios.post(endpoint, payload);
+
+            return {
+              recipient,
+              success: response.data.success,
+              data: response.data.data,
+              scheduled: !!scheduleDateTime,
+              channel: 'EMAIL'
+            };
+          }
+
         } catch (error: any) {
           console.error(`Error enviando a ${recipient}:`, error);
           return {
             recipient,
             success: false,
             error: error.response?.data?.message || error.message,
-            scheduled: scheduleDateTime ? true : false
+            scheduled: !!scheduleDateTime,
+            channel: isSmsChannel ? 'SMS' : 'EMAIL'
           };
         }
       });
@@ -333,25 +429,28 @@ const NotificationsSend: React.FC = () => {
       const successCount = results.filter(r => r.success).length;
       const totalCount = results.length;
 
+      const channelName = isSmsChannel ? 'SMS' : 'EMAIL';
+
       setResult({
         success: successCount > 0,
-        message: scheduleType === 'now' 
-          ? `Enviados ${successCount} de ${totalCount} notificaciones`
-          : `Programadas ${totalCount} notificaciones para el ${formatLocalDate(scheduleDate, scheduleTime)}`,
+        message: scheduleType === 'now'
+          ? `Enviados ${successCount} de ${totalCount} ${channelName}`
+          : `Programados ${totalCount} ${channelName} para el ${formatLocalDate(scheduleDate, scheduleTime)}`,
         results: results,
         total: totalCount,
         successful: successCount,
-        scheduled: scheduleType === 'later'
+        scheduled: scheduleType === 'later',
+        channel: channelName
       });
 
       if (scheduleType === 'now') {
         if (successCount > 0) {
-          showMessage(`${successCount} notificación(es) enviada(s) exitosamente`, 'success');
+          showMessage(`${successCount} ${channelName} enviado(s) exitosamente`, 'success');
         } else {
-          showMessage('No se pudo enviar ninguna notificación', 'error');
+          showMessage(`No se pudo enviar ningún ${channelName}`, 'error');
         }
       } else {
-        showMessage(`${totalCount} notificaciones programadas exitosamente`, 'success');
+        showMessage(`${totalCount} ${channelName} programado(s) exitosamente`, 'success');
       }
 
     } catch (error: any) {
@@ -367,18 +466,55 @@ const NotificationsSend: React.FC = () => {
     }
   };
 
+  // Función para validar y formatear números de teléfono
+  const validateAndFormatPhone = (phone: string): string => {
+    // Eliminar espacios, guiones, paréntesis
+    let cleanNumber = phone.replace(/[\s\-\(\)]/g, '');
+
+    // Si no empieza con +, agregar código de país por defecto (Bolivia: +591)
+    if (!cleanNumber.startsWith('+')) {
+      // Asumir que si empieza con 1, es código de país (USA/Canadá)
+      if (cleanNumber.startsWith('1')) {
+        cleanNumber = '+' + cleanNumber;
+      } else if (cleanNumber.startsWith('591')) {
+        // Bolivia
+        cleanNumber = '+' + cleanNumber;
+      } else if (cleanNumber.startsWith('52')) {
+        // México
+        cleanNumber = '+' + cleanNumber;
+      } else {
+        // Asumir Bolivia por defecto (7 dígitos)
+        if (cleanNumber.length === 8) {
+          cleanNumber = '+591' + cleanNumber;
+        } else if (cleanNumber.length === 9 && cleanNumber.startsWith('0')) {
+          cleanNumber = '+591' + cleanNumber.substring(1);
+        } else {
+          throw new Error('Formato de número inválido. Use: 70797542 o +59170797542');
+        }
+      }
+    }
+
+    // Validar longitud
+    const digitsOnly = cleanNumber.replace(/\D/g, '');
+    if (digitsOnly.length < 10 || digitsOnly.length > 15) {
+      throw new Error('Número de teléfono inválido. Debe tener entre 10 y 15 dígitos');
+    }
+
+    return cleanNumber;
+  };
+
   // Formatear fecha local (para mostrar al usuario)
   const formatLocalDate = (dateString: string, timeString?: string) => {
     const dateTimeString = timeString ? `${dateString}T${timeString}` : dateString;
     const date = new Date(dateTimeString);
-    
+
     const formattedDate = date.toLocaleDateString('es-ES', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric'
     });
-    
+
     if (timeString) {
       const formattedTime = date.toLocaleTimeString('es-ES', {
         hour: '2-digit',
@@ -386,7 +522,7 @@ const NotificationsSend: React.FC = () => {
       });
       return `${formattedDate} a las ${formattedTime}`;
     }
-    
+
     return formattedDate;
   };
 
@@ -408,14 +544,46 @@ const NotificationsSend: React.FC = () => {
 
   // Agregar destinatario manual
   const addManualRecipient = () => {
-    const email = prompt('Ingresa el email del destinatario:');
-    if (email && email.includes('@')) {
-      if (!selectedContacts.includes(email)) {
-        setSelectedContacts([...selectedContacts, email]);
-        setManualRecipients([...manualRecipients, email]);
+    if (!selectedTemplate) {
+      showMessage('Primero selecciona un template', 'error');
+      return;
+    }
+
+    let input = prompt(
+      selectedTemplate.channel === 'SMS'
+        ? 'Ingresa el número de teléfono (Ej: +59170797542):'
+        : 'Ingresa el email del destinatario:'
+    );
+
+    if (!input) return;
+
+    try {
+      if (selectedTemplate.channel === 'SMS') {
+        // Validar y formatear número para SMS
+        const formattedPhone = validateAndFormatPhone(input);
+        if (!selectedContacts.includes(formattedPhone)) {
+          setSelectedContacts([...selectedContacts, formattedPhone]);
+          setManualRecipients([...manualRecipients, formattedPhone]);
+          showMessage(`Número agregado: ${formattedPhone}`, 'success');
+        } else {
+          showMessage('Este número ya está seleccionado', 'info');
+        }
+      } else {
+        // Validar email para EMAIL/WHATSAPP
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(input)) {
+          throw new Error('Ingresa un email válido');
+        }
+        if (!selectedContacts.includes(input)) {
+          setSelectedContacts([...selectedContacts, input]);
+          setManualRecipients([...manualRecipients, input]);
+          showMessage(`Email agregado: ${input}`, 'success');
+        } else {
+          showMessage('Este email ya está seleccionado', 'info');
+        }
       }
-    } else if (email) {
-      alert('Por favor ingresa un email válido');
+    } catch (error: any) {
+      showMessage(`Error: ${error.message}`, 'error');
     }
   };
 
@@ -429,12 +597,51 @@ const NotificationsSend: React.FC = () => {
 
   // Seleccionar contacto individual
   const toggleIndividualContact = (contact: Contact) => {
-    if (contact.email) {
-      if (selectedContacts.includes(contact.email)) {
-        setSelectedContacts(selectedContacts.filter(email => email !== contact.email));
+    if (!selectedTemplate) {
+      showMessage('Primero selecciona un template', 'error');
+      return;
+    }
+
+    // Determinar qué valor usar según el canal del template
+    let valueToUse: string | null = null;
+    let errorMessage = '';
+
+    if (selectedTemplate.channel === 'SMS') {
+      // Para SMS: usar el número de teléfono
+      if (!contact.phone || contact.phone.trim() === '') {
+        errorMessage = `${contact.name} no tiene número de teléfono`;
       } else {
-        setSelectedContacts([...selectedContacts, contact.email]);
+        try {
+          valueToUse = validateAndFormatPhone(contact.phone);
+        } catch (error: any) {
+          errorMessage = `Número inválido para ${contact.name}: ${error.message}`;
+        }
       }
+    } else {
+      // Para EMAIL o WHATSAPP: usar el email
+      if (!contact.email || contact.email.trim() === '') {
+        errorMessage = `${contact.name} no tiene email`;
+      } else {
+        valueToUse = contact.email;
+      }
+    }
+
+    if (errorMessage) {
+      showMessage(errorMessage, 'error');
+      return;
+    }
+
+    if (!valueToUse) return;
+
+    // Verificar si ya está seleccionado
+    if (selectedContacts.includes(valueToUse)) {
+      // Remover
+      setSelectedContacts(selectedContacts.filter(v => v !== valueToUse));
+      showMessage(`${contact.name} removido de la lista`, 'info');
+    } else {
+      // Agregar
+      setSelectedContacts([...selectedContacts, valueToUse]);
+      showMessage(`${contact.name} agregado a la lista`, 'success');
     }
   };
 
@@ -450,33 +657,47 @@ const NotificationsSend: React.FC = () => {
   // Obtener contactos de grupos seleccionados
   const getContactsFromSelectedGroups = () => {
     const groupContacts: string[] = [];
-    
+
     selectedGroups.forEach(groupId => {
       const group = contactGroups.find(g => g.id === groupId);
       if (group) {
         // Simular emails del grupo
-        const groupEmails = Array.from({ length: Math.min(group.contactCount, 5) }, (_, i) => 
-          `grupo${groupId}-contacto${i+1}@ejemplo.com`
+        const groupEmails = Array.from({ length: Math.min(group.contactCount, 5) }, (_, i) =>
+          `grupo${groupId}-contacto${i + 1}@ejemplo.com`
         );
         groupContacts.push(...groupEmails);
       }
     });
-    
+
     return groupContacts;
   };
 
   // Cambiar tipo de selección
   const handleRecipientTypeChange = (type: 'individual' | 'group' | 'manual') => {
     setSelectedRecipientType(type);
-    
+
     if (type === 'manual') {
       // Mantener solo los manuales
-      const manualEmails = selectedContacts.filter(email => manualRecipients.includes(email));
-      setSelectedContacts(manualEmails.length > 0 ? manualEmails : ['hmauri2000@gmail.com']);
+      const manualRecips = selectedContacts.filter(value => manualRecipients.includes(value));
+      setSelectedContacts(manualRecips.length > 0 ? manualRecips : ['hmauri2000@gmail.com']);
       setSelectedGroups([]);
     } else if (type === 'individual') {
-      // Solo contactos individuales
-      setSelectedContacts(manualRecipients.filter(r => selectedContacts.includes(r)));
+      // Solo contactos individuales (no manuales)
+      const individualContacts = selectedContacts.filter(value => {
+        if (manualRecipients.includes(value)) return false;
+        
+        // Verificar si el valor existe en los contactos
+        if (selectedTemplate) {
+          if (selectedTemplate.channel === 'SMS') {
+            return contacts.some(c => c.phone === value);
+          } else {
+            return contacts.some(c => c.email === value);
+          }
+        }
+        return false;
+      });
+      
+      setSelectedContacts(individualContacts.length > 0 ? individualContacts : []);
       setSelectedGroups([]);
     } else if (type === 'group') {
       // Solo grupos
@@ -487,16 +708,16 @@ const NotificationsSend: React.FC = () => {
   // Template visualizado (con variables reemplazadas)
   const getVisualTemplate = () => {
     if (!selectedTemplate) return '';
-    
+
     const contentWithVars = replaceVariables(selectedTemplate.content, variables);
-    
+
     // Limpiar HTML para vista previa segura
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = contentWithVars;
-    
+
     // Mantener solo etiquetas básicas seguras
     const allowedTags = ['b', 'strong', 'i', 'em', 'u', 'br', 'p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
-    
+
     // Filtrar atributos peligrosos
     const elements = tempDiv.getElementsByTagName('*');
     for (let i = 0; i < elements.length; i++) {
@@ -515,7 +736,7 @@ const NotificationsSend: React.FC = () => {
         });
       }
     }
-    
+
     return tempDiv.innerHTML;
   };
 
@@ -528,17 +749,31 @@ const NotificationsSend: React.FC = () => {
   };
 
   // Filtrar templates
-  const filteredTemplates = templates.filter(template => 
+  const filteredTemplates = templates.filter(template =>
     template.name.toLowerCase().includes(searchTemplateTerm.toLowerCase()) ||
     template.channel.toLowerCase().includes(searchTemplateTerm.toLowerCase())
   );
 
-  // Filtrar contactos
-  const filteredContacts = contacts.filter(contact =>
-    contact.name.toLowerCase().includes(searchContactTerm.toLowerCase()) ||
-    contact.email.toLowerCase().includes(searchContactTerm.toLowerCase()) ||
-    contact.tags?.some(tag => tag.toLowerCase().includes(searchContactTerm.toLowerCase()))
-  );
+  // Filtrar contactos - mejorado para mostrar según canal
+  const filteredContacts = contacts.filter(contact => {
+    const searchTerm = searchContactTerm.toLowerCase();
+    
+    // Primero verificar si el contacto tiene el dato necesario según el canal
+    if (selectedTemplate) {
+      if (selectedTemplate.channel === 'SMS' && (!contact.phone || contact.phone.trim() === '')) {
+        return false;
+      } else if (selectedTemplate.channel !== 'SMS' && (!contact.email || contact.email.trim() === '')) {
+        return false;
+      }
+    }
+    
+    return (
+      contact.name.toLowerCase().includes(searchTerm) ||
+      contact.email.toLowerCase().includes(searchTerm) ||
+      (contact.phone && contact.phone.toLowerCase().includes(searchTerm)) ||
+      contact.tags?.some(tag => tag.toLowerCase().includes(searchTerm))
+    );
+  });
 
   // Filtrar grupos
   const filteredGroups = contactGroups.filter(group =>
@@ -548,8 +783,8 @@ const NotificationsSend: React.FC = () => {
   );
 
   // Total destinatarios
-  const totalRecipients = selectedRecipientType === 'group' 
-    ? getContactsFromSelectedGroups().length 
+  const totalRecipients = selectedRecipientType === 'group'
+    ? getContactsFromSelectedGroups().length
     : selectedContacts.length;
 
   // Variables del template
@@ -565,14 +800,36 @@ const NotificationsSend: React.FC = () => {
       ]);
       setLoading(false);
     };
-    
+
     loadData();
   }, []);
+
+  // Efecto para actualizar contactos cuando cambia el template
+  useEffect(() => {
+    if (selectedTemplate && selectedRecipientType === 'individual') {
+      // Filtrar contactos que tengan el dato necesario para el canal
+      const validContacts = contacts.filter(contact => {
+        if (selectedTemplate.channel === 'SMS') {
+          return contact.phone && contact.phone.trim() !== '';
+        } else {
+          return contact.email && contact.email.trim() !== '';
+        }
+      });
+      
+      if (validContacts.length > 0) {
+        const initialValues = validContacts
+          .slice(0, 3)
+          .map(contact => selectedTemplate.channel === 'SMS' ? contact.phone : contact.email);
+        
+        setSelectedContacts(['hmauri2000@gmail.com', ...initialValues]);
+      }
+    }
+  }, [selectedTemplate]);
 
   // VERIFICAR SI EL BOTÓN DEBE ESTAR DESHABILITADO
   const isSendButtonDisabled = () => {
     if (!selectedTemplate) return true;
-    
+
     switch (selectedRecipientType) {
       case 'individual':
         return selectedContacts.length === 0;
@@ -597,6 +854,44 @@ const NotificationsSend: React.FC = () => {
     const scheduleDateTime = new Date(`${scheduleDate}T${scheduleTime}`);
     const now = new Date();
     return scheduleDateTime <= now;
+  };
+
+  // Componente para mostrar información del contacto
+  const ContactInfo = ({ contact, value }: { contact?: Contact, value: string }) => {
+    if (!selectedTemplate) return null;
+
+    const isSMS = selectedTemplate.channel === 'SMS';
+    const displayValue = isSMS ? formatPhoneForDisplay(value) : value;
+    const icon = isSMS ? <Phone className="w-4 h-4 text-green-600" /> : <MailIcon className="w-4 h-4 text-blue-600" />;
+    const contactName = contact?.name || value;
+    const contactEmail = contact?.email || (isSMS ? '' : value);
+    const contactPhone = contact?.phone || (isSMS ? value : '');
+
+    return (
+      <div className="flex flex-col">
+        <div className="font-medium">{contactName}</div>
+        <div className="text-sm text-gray-600 flex flex-col gap-1 mt-1">
+          {!isSMS && contactEmail && (
+            <div className="flex items-center gap-1">
+              <MailIcon className="w-3 h-3" />
+              {contactEmail}
+            </div>
+          )}
+          {isSMS && contactPhone && (
+            <div className="flex items-center gap-1">
+              <Phone className="w-3 h-3" />
+              {formatPhoneForDisplay(contactPhone)}
+            </div>
+          )}
+          {!isSMS && contactPhone && (
+            <div className="flex items-center gap-1">
+              <Phone className="w-3 h-3" />
+              {formatPhoneForDisplay(contactPhone)}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
@@ -631,11 +926,10 @@ const NotificationsSend: React.FC = () => {
 
       {/* Mensajes */}
       {message && (
-        <div className={`m-6 p-4 rounded-lg flex justify-between items-center ${
-          message.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
+        <div className={`m-6 p-4 rounded-lg flex justify-between items-center ${message.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
           message.type === 'error' ? 'bg-red-100 text-red-800 border border-red-200' :
-          'bg-blue-100 text-blue-800 border border-blue-200'
-        }`}>
+            'bg-blue-100 text-blue-800 border border-blue-200'
+          }`}>
           <span>{message.text}</span>
           <button onClick={() => setMessage(null)} className="hover:bg-white/50 rounded-full w-6 h-6 flex items-center justify-center">
             ×
@@ -673,11 +967,10 @@ const NotificationsSend: React.FC = () => {
                 <div className="border border-gray-300 rounded-lg p-4 bg-gradient-to-r from-blue-50 to-indigo-50">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${
-                        selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100' :
+                      <div className={`p-2 rounded-lg ${selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100' :
                         selectedTemplate.channel === 'SMS' ? 'bg-green-100' :
-                        'bg-emerald-100'
-                      }`}>
+                          'bg-emerald-100'
+                        }`}>
                         {selectedTemplate.channel === 'EMAIL' && <Mail className="w-5 h-5 text-blue-600" />}
                         {selectedTemplate.channel === 'SMS' && <MessageSquare className="w-5 h-5 text-green-600" />}
                         {selectedTemplate.channel === 'WHATSAPP' && <MessageCircle className="w-5 h-5 text-green-500" />}
@@ -685,11 +978,10 @@ const NotificationsSend: React.FC = () => {
                       <div>
                         <h3 className="font-bold text-gray-900">{selectedTemplate.name}</h3>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
                             selectedTemplate.channel === 'SMS' ? 'bg-green-100 text-green-800' :
-                            'bg-emerald-100 text-emerald-800'
-                          }`}>
+                              'bg-emerald-100 text-emerald-800'
+                            }`}>
                             {selectedTemplate.channel}
                           </span>
                           <span className="text-xs text-gray-500">
@@ -705,7 +997,7 @@ const NotificationsSend: React.FC = () => {
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  
+
                   <div className="mt-4 p-3 bg-white rounded border border-gray-200">
                     <div className="text-sm text-gray-700 line-clamp-2">
                       {selectedTemplate.content.replace(/<[^>]*>/g, '').substring(0, 100)}...
@@ -724,7 +1016,7 @@ const NotificationsSend: React.FC = () => {
               )}
             </div>
 
-            {/* Selección de Destinatarios */}
+            {/* Selección de Destinatarios - MEJORADO */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -745,46 +1037,45 @@ const NotificationsSend: React.FC = () => {
               <div className="grid grid-cols-3 gap-3 mb-6">
                 <button
                   onClick={() => handleRecipientTypeChange('individual')}
-                  className={`px-4 py-3 rounded-lg border transition flex flex-col items-center gap-2 ${
-                    selectedRecipientType === 'individual'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
-                      : 'border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50'
-                  }`}
+                  className={`px-4 py-3 rounded-lg border transition flex flex-col items-center gap-2 ${selectedRecipientType === 'individual'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                    : 'border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50'
+                    }`}
                 >
                   <User className="w-5 h-5" />
                   <span className="text-sm font-medium">Individual</span>
                 </button>
-                
+
                 <button
                   onClick={() => handleRecipientTypeChange('group')}
-                  className={`px-4 py-3 rounded-lg border transition flex flex-col items-center gap-2 ${
-                    selectedRecipientType === 'group'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
-                      : 'border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50'
-                  }`}
+                  className={`px-4 py-3 rounded-lg border transition flex flex-col items-center gap-2 ${selectedRecipientType === 'group'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                    : 'border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50'
+                    }`}
                 >
                   <Users className="w-5 h-5" />
                   <span className="text-sm font-medium">Grupo</span>
                 </button>
-                
+
                 <button
                   onClick={() => handleRecipientTypeChange('manual')}
-                  className={`px-4 py-3 rounded-lg border transition flex flex-col items-center gap-2 ${
-                    selectedRecipientType === 'manual'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
-                      : 'border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50'
-                  }`}
+                  className={`px-4 py-3 rounded-lg border transition flex flex-col items-center gap-2 ${selectedRecipientType === 'manual'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                    : 'border-gray-300 hover:border-gray-400 text-gray-700 hover:bg-gray-50'
+                    }`}
                 >
                   <MailIcon className="w-5 h-5" />
                   <span className="text-sm font-medium">Manual</span>
                 </button>
               </div>
 
-              {/* Contenido según tipo */}
+              {/* Contenido según tipo - MEJORADO */}
               {selectedRecipientType === 'individual' && (
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-medium text-gray-700">Contactos individuales</span>
+                    <span className="text-sm font-medium text-gray-700">
+                      {selectedTemplate ? `Contactos para ${selectedTemplate.channel}` : 'Contactos individuales'}
+                    </span>
                     <button
                       onClick={() => setShowContactsModal(true)}
                       className="text-sm text-blue-600 hover:text-blue-800 font-medium"
@@ -792,26 +1083,33 @@ const NotificationsSend: React.FC = () => {
                       Ver todos los contactos
                     </button>
                   </div>
-                  
+
                   {selectedContacts.length > 0 ? (
                     <div className="space-y-2">
-                      {selectedContacts.slice(0, 5).map((email, index) => {
-                        const contact = contacts.find(c => c.email === email);
+                      {selectedContacts.slice(0, 5).map((value, index) => {
+                        const contact = getContactByValue(value);
+                        const isManual = manualRecipients.includes(value);
+                        
                         return (
                           <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
                             <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                <User className="w-4 h-4 text-blue-600" />
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedTemplate?.channel === 'SMS' ? 'bg-green-100' : 'bg-blue-100'
+                                }`}>
+                                {selectedTemplate?.channel === 'SMS' ? (
+                                  <Phone className="w-4 h-4 text-green-600" />
+                                ) : (
+                                  <MailIcon className="w-4 h-4 text-blue-600" />
+                                )}
                               </div>
-                              <div>
-                                <div className="font-medium">
-                                  {contact ? contact.name : email}
-                                </div>
-                                <div className="text-sm text-gray-500">{email}</div>
-                              </div>
+                              <ContactInfo contact={contact} value={value} />
+                              {isManual && (
+                                <span className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded">
+                                  Manual
+                                </span>
+                              )}
                             </div>
                             <button
-                              onClick={() => removeRecipient(email)}
+                              onClick={() => removeRecipient(value)}
                               className="text-red-600 hover:text-red-800 p-1"
                             >
                               <X className="w-4 h-4" />
@@ -819,7 +1117,6 @@ const NotificationsSend: React.FC = () => {
                           </div>
                         );
                       })}
-                      
                       {selectedContacts.length > 5 && (
                         <div className="text-center text-sm text-gray-500">
                           +{selectedContacts.length - 5} contactos más
@@ -849,13 +1146,13 @@ const NotificationsSend: React.FC = () => {
                       Ver todos los grupos
                     </button>
                   </div>
-                  
+
                   {selectedGroups.length > 0 ? (
                     <div className="space-y-2">
                       {selectedGroups.map((groupId) => {
                         const group = contactGroups.find(g => g.id === groupId);
                         if (!group) return null;
-                        
+
                         return (
                           <div key={groupId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
                             <div className="flex items-center gap-3">
@@ -888,7 +1185,7 @@ const NotificationsSend: React.FC = () => {
                       <span className="text-gray-700 font-medium">Seleccionar grupos</span>
                     </button>
                   )}
-                  
+
                   {selectedGroups.length > 0 && (
                     <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                       <div className="flex items-center gap-2 text-blue-700">
@@ -910,20 +1207,38 @@ const NotificationsSend: React.FC = () => {
                       className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
                     >
                       <Plus className="w-4 h-4" />
-                      Agregar email
+                      {selectedTemplate?.channel === 'SMS' ? 'Agregar número' : 'Agregar email'}
                     </button>
                   </div>
-                  
+
                   {selectedContacts.length > 0 ? (
                     <div className="space-y-2">
-                      {selectedContacts.map((email, index) => (
+                      {selectedContacts.map((value, index) => (
                         <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
                           <div className="flex items-center gap-3">
-                            <MailIcon className="w-5 h-5 text-gray-400" />
-                            <span className="font-medium">{email}</span>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedTemplate?.channel === 'SMS' ? 'bg-green-100' : 'bg-blue-100'
+                              }`}>
+                              {selectedTemplate?.channel === 'SMS' ? (
+                                <Phone className="w-4 h-4 text-green-600" />
+                              ) : (
+                                <MailIcon className="w-4 h-4 text-blue-600" />
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-medium">
+                                {selectedTemplate?.channel === 'SMS' ? formatPhoneForDisplay(value) : value}
+                              </div>
+                              <div className="text-sm text-gray-500 flex items-center gap-2">
+                                <span>Destinatario manual</span>
+                                <span className={`px-2 py-1 rounded text-xs ${selectedTemplate?.channel === 'SMS' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                                  }`}>
+                                  {selectedTemplate?.channel || 'EMAIL'}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                           <button
-                            onClick={() => removeRecipient(email)}
+                            onClick={() => removeRecipient(value)}
                             className="text-red-600 hover:text-red-800 p-1"
                           >
                             <X className="w-4 h-4" />
@@ -956,23 +1271,21 @@ const NotificationsSend: React.FC = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <button
                     onClick={() => setScheduleType('now')}
-                    className={`px-4 py-3 rounded-lg border transition flex items-center justify-center gap-2 ${
-                      scheduleType === 'now'
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-gray-300 hover:border-gray-400 text-gray-700'
-                    }`}
+                    className={`px-4 py-3 rounded-lg border transition flex items-center justify-center gap-2 ${scheduleType === 'now'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 hover:border-gray-400 text-gray-700'
+                      }`}
                   >
                     <Zap className="w-4 h-4" />
                     <span>Enviar Ahora</span>
                   </button>
-                  
+
                   <button
                     onClick={() => setScheduleType('later')}
-                    className={`px-4 py-3 rounded-lg border transition flex items-center justify-center gap-2 ${
-                      scheduleType === 'later'
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-gray-300 hover:border-gray-400 text-gray-700'
-                    }`}
+                    className={`px-4 py-3 rounded-lg border transition flex items-center justify-center gap-2 ${scheduleType === 'later'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 hover:border-gray-400 text-gray-700'
+                      }`}
                   >
                     <Calendar className="w-4 h-4" />
                     <span>Programar</span>
@@ -994,7 +1307,7 @@ const NotificationsSend: React.FC = () => {
                           className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         />
                       </div>
-                      
+
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           <Clock className="w-4 h-4 inline mr-2" />
@@ -1008,13 +1321,11 @@ const NotificationsSend: React.FC = () => {
                         />
                       </div>
                     </div>
-                    
-                    {/* Indicador visual de fecha válida - CORREGIDO */}
-                    <div className={`p-3 rounded-lg border ${
-                      isSchedulePast() 
-                        ? 'bg-yellow-50 border-yellow-200' 
-                        : 'bg-blue-50 border-blue-200'
-                    }`}>
+
+                    <div className={`p-3 rounded-lg border ${isSchedulePast()
+                      ? 'bg-yellow-50 border-yellow-200'
+                      : 'bg-blue-50 border-blue-200'
+                      }`}>
                       <div className="flex items-center gap-2">
                         {isSchedulePast() ? (
                           <>
@@ -1066,15 +1377,15 @@ const NotificationsSend: React.FC = () => {
                     <div key={variable}>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         {variable === 'nombre' ? '👤 Nombre' :
-                         variable === 'email' ? '📧 Email' :
-                         variable === 'telefono' ? '📱 Teléfono' :
-                         variable === 'empresa' ? '🏢 Empresa' :
-                         variable === 'fecha' ? '📅 Fecha' :
-                         variable === 'hora' ? '⏰ Hora' :
-                         variable === 'monto' ? '💰 Monto' :
-                         variable === 'fechaLimite' ? '⏳ Fecha Límite' :
-                         variable === 'numeroFactura' ? '🧾 N° Factura' :
-                         variable.charAt(0).toUpperCase() + variable.slice(1)}
+                          variable === 'email' ? '📧 Email' :
+                            variable === 'telefono' ? '📱 Teléfono' :
+                              variable === 'empresa' ? '🏢 Empresa' :
+                                variable === 'fecha' ? '📅 Fecha' :
+                                  variable === 'hora' ? '⏰ Hora' :
+                                    variable === 'monto' ? '💰 Monto' :
+                                      variable === 'fechaLimite' ? '⏳ Fecha Límite' :
+                                        variable === 'numeroFactura' ? '🧾 N° Factura' :
+                                          variable.charAt(0).toUpperCase() + variable.slice(1)}
                       </label>
                       <input
                         type="text"
@@ -1104,7 +1415,7 @@ const NotificationsSend: React.FC = () => {
                 ) : (
                   <>
                     {scheduleType === 'now' ? <Send className="w-5 h-5" /> : <Calendar className="w-5 h-5" />}
-                    {scheduleType === 'now' 
+                    {scheduleType === 'now'
                       ? `Enviar a ${totalRecipients} destinatario(s)`
                       : `Programar ${totalRecipients} notificaciones`
                     }
@@ -1112,8 +1423,8 @@ const NotificationsSend: React.FC = () => {
                 )}
               </button>
               <p className="text-center text-sm text-gray-500 mt-3">
-                {scheduleType === 'now' 
-                  ? 'Los emails se enviarán inmediatamente'
+                {scheduleType === 'now'
+                  ? `Los ${selectedTemplate?.channel === 'SMS' ? 'SMS' : 'emails'} se enviarán inmediatamente`
                   : `Programado para el ${getFormattedSchedule()}`
                 }
               </p>
@@ -1127,11 +1438,10 @@ const NotificationsSend: React.FC = () => {
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-lg font-semibold text-gray-900">Vista Previa</h2>
                 {selectedTemplate && (
-                  <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${
-                    selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
+                  <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
                     selectedTemplate.channel === 'SMS' ? 'bg-green-100 text-green-800' :
-                    'bg-emerald-100 text-emerald-800'
-                  }`}>
+                      'bg-emerald-100 text-emerald-800'
+                    }`}>
                     {selectedTemplate.channel === 'EMAIL' && <Mail className="w-4 h-4" />}
                     {selectedTemplate.channel === 'SMS' && <MessageSquare className="w-4 h-4" />}
                     {selectedTemplate.channel === 'WHATSAPP' && <MessageCircle className="w-4 h-4" />}
@@ -1158,14 +1468,14 @@ const NotificationsSend: React.FC = () => {
                     <div className="text-sm font-medium text-gray-700 mb-2">Contenido:</div>
                     <div className="bg-gray-50 rounded-lg p-4 border border-gray-300 min-h-[400px] overflow-y-auto">
                       {selectedTemplate.content ? (
-                        <div 
+                        <div
                           className="text-gray-800 text-sm leading-relaxed"
-                          style={{ 
-                            fontFamily: selectedTemplate.channel === 'EMAIL' ? 'Arial, sans-serif' : 
-                                       selectedTemplate.channel === 'SMS' ? "'Segoe UI', sans-serif" : 
-                                       "'Helvetica Neue', sans-serif"
+                          style={{
+                            fontFamily: selectedTemplate.channel === 'EMAIL' ? 'Arial, sans-serif' :
+                              selectedTemplate.channel === 'SMS' ? "'Segoe UI', sans-serif" :
+                                "'Helvetica Neue', sans-serif"
                           }}
-                          dangerouslySetInnerHTML={{ 
+                          dangerouslySetInnerHTML={{
                             __html: getVisualTemplate()
                           }}
                         />
@@ -1197,14 +1507,14 @@ const NotificationsSend: React.FC = () => {
                         <span>Tipo:</span>
                         <span className="font-medium">
                           {selectedRecipientType === 'individual' ? 'Individual' :
-                           selectedRecipientType === 'group' ? 'Grupos' : 'Manual'}
+                            selectedRecipientType === 'group' ? 'Grupos' : 'Manual'}
                         </span>
                       </div>
                       <div className="flex justify-between">
                         <span>Programación:</span>
                         <span className="font-medium">
-                          {scheduleType === 'now' ? 'Inmediato' : 
-                           getFormattedSchedule()}
+                          {scheduleType === 'now' ? 'Inmediato' :
+                            getFormattedSchedule()}
                         </span>
                       </div>
                     </div>
@@ -1223,15 +1533,13 @@ const NotificationsSend: React.FC = () => {
 
             {/* Resultado del envío */}
             {result && (
-              <div className={`rounded-xl border p-6 ${
-                result.success 
-                  ? 'bg-green-50 border-green-200' 
-                  : 'bg-red-50 border-red-200'
-              }`}>
+              <div className={`rounded-xl border p-6 ${result.success
+                ? 'bg-green-50 border-green-200'
+                : 'bg-red-50 border-red-200'
+                }`}>
                 <div className="flex items-start gap-4">
-                  <div className={`p-3 rounded-lg ${
-                    result.success ? 'bg-green-100' : 'bg-red-100'
-                  }`}>
+                  <div className={`p-3 rounded-lg ${result.success ? 'bg-green-100' : 'bg-red-100'
+                    }`}>
                     {result.success ? (
                       result.scheduled ? <Calendar className="w-6 h-6 text-green-600" /> : <CheckCircle className="w-6 h-6 text-green-600" />
                     ) : (
@@ -1240,7 +1548,7 @@ const NotificationsSend: React.FC = () => {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      {result.success 
+                      {result.success
                         ? (result.scheduled ? '✅ Notificaciones Programadas' : '✅ Notificaciones Enviadas')
                         : '❌ Error al Enviar'
                       }
@@ -1248,7 +1556,7 @@ const NotificationsSend: React.FC = () => {
                     <p className={result.success ? 'text-green-700' : 'text-red-700'}>
                       {result.message}
                     </p>
-                    
+
                     {result.success && !result.scheduled && (
                       <div className="mt-3 text-sm">
                         <div className="font-medium text-gray-700 mb-1">Destinatarios exitosos:</div>
@@ -1259,7 +1567,9 @@ const NotificationsSend: React.FC = () => {
                             .map((r: any, i: number) => (
                               <div key={i} className="flex items-center">
                                 <span className="text-green-600 mr-2">✓</span>
-                                <span className="truncate">{r.recipient}</span>
+                                <span className="truncate">
+                                  {r.channel === 'SMS' ? formatPhoneForDisplay(r.recipient) : r.recipient}
+                                </span>
                               </div>
                             ))}
                           {result.successful > 3 && (
@@ -1270,7 +1580,7 @@ const NotificationsSend: React.FC = () => {
                         </div>
                       </div>
                     )}
-                    
+
                     {result.error && (
                       <div className="mt-3 p-2 bg-white/50 rounded">
                         <div className="font-medium text-red-800">Error:</div>
@@ -1304,7 +1614,7 @@ const NotificationsSend: React.FC = () => {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              
+
               <div className="mt-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -1318,7 +1628,7 @@ const NotificationsSend: React.FC = () => {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-6">
               {loadingTemplates ? (
                 <div className="flex items-center justify-center h-64">
@@ -1330,7 +1640,7 @@ const NotificationsSend: React.FC = () => {
                   <div className="text-4xl mb-4">📝</div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">No se encontraron templates</h3>
                   <p className="text-gray-600">
-                    {searchTemplateTerm 
+                    {searchTemplateTerm
                       ? 'Intenta con otros términos de búsqueda'
                       : 'No hay templates disponibles'}
                   </p>
@@ -1344,18 +1654,16 @@ const NotificationsSend: React.FC = () => {
                         setSelectedTemplate(template);
                         setShowTemplateModal(false);
                       }}
-                      className={`bg-white rounded-xl border p-5 hover:shadow-lg transition-all text-left group ${
-                        selectedTemplate?.id === template.id 
-                          ? 'border-blue-500 ring-2 ring-blue-200' 
-                          : 'border-gray-200 hover:border-blue-300'
-                      }`}
+                      className={`bg-white rounded-xl border p-5 hover:shadow-lg transition-all text-left group ${selectedTemplate?.id === template.id
+                        ? 'border-blue-500 ring-2 ring-blue-200'
+                        : 'border-gray-200 hover:border-blue-300'
+                        }`}
                     >
                       <div className="flex items-start justify-between mb-4">
-                        <div className={`p-2.5 rounded-lg ${
-                          template.channel === 'EMAIL' ? 'bg-blue-100' :
+                        <div className={`p-2.5 rounded-lg ${template.channel === 'EMAIL' ? 'bg-blue-100' :
                           template.channel === 'SMS' ? 'bg-green-100' :
-                          'bg-emerald-100'
-                        }`}>
+                            'bg-emerald-100'
+                          }`}>
                           {template.channel === 'EMAIL' && <Mail className="w-6 h-6 text-blue-600" />}
                           {template.channel === 'SMS' && <MessageSquare className="w-6 h-6 text-green-600" />}
                           {template.channel === 'WHATSAPP' && <MessageCircle className="w-6 h-6 text-green-500" />}
@@ -1366,25 +1674,24 @@ const NotificationsSend: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      
+
                       <h3 className="font-bold text-gray-900 text-lg mb-2 group-hover:text-blue-700 transition">
                         {template.name}
                       </h3>
-                      
+
                       <div className="mb-4">
-                        <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
-                          template.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
+                        <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${template.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
                           template.channel === 'SMS' ? 'bg-green-100 text-green-800' :
-                          'bg-emerald-100 text-emerald-800'
-                        }`}>
+                            'bg-emerald-100 text-emerald-800'
+                          }`}>
                           {template.channel}
                         </div>
                       </div>
-                      
+
                       <div className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3 border border-gray-100 line-clamp-3">
                         {template.content.replace(/<[^>]*>/g, ' ').substring(0, 120)}...
                       </div>
-                      
+
                       <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between">
                         <span className="text-xs text-gray-500">
                           {template.content.length} caracteres
@@ -1399,7 +1706,7 @@ const NotificationsSend: React.FC = () => {
                 </div>
               )}
             </div>
-            
+
             <div className="p-6 border-t border-gray-200">
               <button
                 onClick={() => setShowTemplateModal(false)}
@@ -1412,7 +1719,7 @@ const NotificationsSend: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Contactos */}
+      {/* Modal de Contactos - MEJORADO */}
       {showContactsModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
@@ -1423,6 +1730,11 @@ const NotificationsSend: React.FC = () => {
                   <p className="text-gray-600 mt-1">
                     {contacts.length} contactos disponibles • Selecciona múltiples
                   </p>
+                  {selectedTemplate && (
+                    <p className="text-sm text-blue-600 mt-1">
+                      Mostrando contactos con {selectedTemplate.channel === 'SMS' ? 'teléfono' : 'email'} válido para {selectedTemplate.channel}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => setShowContactsModal(false)}
@@ -1431,13 +1743,13 @@ const NotificationsSend: React.FC = () => {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              
+
               <div className="mt-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
                     type="text"
-                    placeholder="Buscar contactos por nombre, email o etiqueta..."
+                    placeholder={`Buscar contactos por nombre, ${selectedTemplate?.channel === 'SMS' ? 'teléfono' : 'email'} o etiqueta...`}
                     value={searchContactTerm}
                     onChange={(e) => setSearchContactTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -1445,64 +1757,102 @@ const NotificationsSend: React.FC = () => {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-6">
               {filteredContacts.length === 0 ? (
                 <div className="text-center py-16">
                   <div className="text-4xl mb-4">👤</div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">No se encontraron contactos</h3>
                   <p className="text-gray-600">
-                    {searchContactTerm 
+                    {searchContactTerm
                       ? 'Intenta con otros términos de búsqueda'
-                      : 'No hay contactos disponibles'}
+                      : selectedTemplate?.channel === 'SMS'
+                        ? 'No hay contactos con número de teléfono válido'
+                        : 'No hay contactos con email válido'}
                   </p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {filteredContacts.map(contact => (
-                    <div
-                      key={contact.id}
-                      className={`flex items-center justify-between p-4 rounded-xl border transition cursor-pointer ${
-                        selectedContacts.includes(contact.email)
+                  {filteredContacts.map(contact => {
+                    // Determinar si está seleccionado según el canal
+                    const isSelected = selectedContacts.includes(
+                      selectedTemplate?.channel === 'SMS' ? contact.phone : contact.email
+                    );
+
+                    return (
+                      <div
+                        key={contact.id}
+                        className={`flex items-center justify-between p-4 rounded-xl border transition cursor-pointer ${isSelected
                           ? 'border-blue-500 bg-blue-50'
                           : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                      }`}
-                      onClick={() => toggleIndividualContact(contact)}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                          <User className="w-5 h-5 text-blue-600" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-gray-900">{contact.name}</div>
-                          <div className="text-sm text-gray-600">{contact.email}</div>
-                          <div className="flex gap-2 mt-2">
-                            {contact.tags?.map((tag, index) => (
-                              <span key={index} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">
-                                {tag}
-                              </span>
-                            ))}
+                          }`}
+                        onClick={() => toggleIndividualContact(contact)}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                            <User className="w-6 h-6 text-blue-600" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-bold text-gray-900">{contact.name}</div>
+                            <div className="text-sm text-gray-600 space-y-1 mt-1">
+                              {contact.email && (
+                                <div className="flex items-center gap-1">
+                                  <MailIcon className="w-3 h-3" />
+                                  {contact.email}
+                                </div>
+                              )}
+                              {contact.phone && (
+                                <div className="flex items-center gap-1">
+                                  <Phone className="w-3 h-3" />
+                                  {formatPhoneForDisplay(contact.phone)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                              {contact.tags?.map((tag, index) => (
+                                <span key={index} className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
                           </div>
                         </div>
+
+                        <div className="flex items-center gap-3">
+                          {selectedTemplate && (
+                            <div className={`px-2 py-1 rounded text-xs ${selectedTemplate.channel === 'SMS' && contact.phone
+                                ? 'bg-green-100 text-green-800'
+                                : selectedTemplate.channel === 'EMAIL' && contact.email
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                              {selectedTemplate.channel}
+                            </div>
+                          )}
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleIndividualContact(contact)}
+                            className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                          />
+                        </div>
                       </div>
-                      
-                      <input
-                        type="checkbox"
-                        checked={selectedContacts.includes(contact.email)}
-                        onChange={() => toggleIndividualContact(contact)}
-                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
-            
+
             <div className="p-6 border-t border-gray-200 flex justify-between items-center">
               <div>
                 <span className="font-medium text-gray-900">
                   {selectedContacts.length} contactos seleccionados
                 </span>
+                {selectedTemplate && (
+                  <div className="text-sm text-gray-600">
+                    Canal: {selectedTemplate.channel}
+                  </div>
+                )}
               </div>
               <div className="flex gap-3">
                 <button
@@ -1544,7 +1894,7 @@ const NotificationsSend: React.FC = () => {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              
+
               <div className="mt-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -1558,14 +1908,14 @@ const NotificationsSend: React.FC = () => {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-6">
               {filteredGroups.length === 0 ? (
                 <div className="text-center py-16">
                   <div className="text-4xl mb-4">👥</div>
                   <h3 className="text-lg font-bold text-gray-900 mb-2">No se encontraron grupos</h3>
                   <p className="text-gray-600">
-                    {searchGroupTerm 
+                    {searchGroupTerm
                       ? 'Intenta con otros términos de búsqueda'
                       : 'No hay grupos disponibles'}
                   </p>
@@ -1575,11 +1925,10 @@ const NotificationsSend: React.FC = () => {
                   {filteredGroups.map(group => (
                     <div
                       key={group.id}
-                      className={`border rounded-xl p-5 transition cursor-pointer ${
-                        selectedGroups.includes(group.id)
-                          ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                          : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
-                      }`}
+                      className={`border rounded-xl p-5 transition cursor-pointer ${selectedGroups.includes(group.id)
+                        ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                        : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
+                        }`}
                       onClick={() => toggleGroup(group.id)}
                     >
                       <div className="flex items-start justify-between mb-4">
@@ -1593,10 +1942,10 @@ const NotificationsSend: React.FC = () => {
                           className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
                         />
                       </div>
-                      
+
                       <h3 className="font-bold text-gray-900 text-lg mb-2">{group.name}</h3>
                       <p className="text-gray-600 text-sm mb-4">{group.description}</p>
-                      
+
                       <div className="flex items-center justify-between">
                         <div className="flex gap-2">
                           {group.tags.map((tag, index) => (
@@ -1614,7 +1963,7 @@ const NotificationsSend: React.FC = () => {
                 </div>
               )}
             </div>
-            
+
             <div className="p-6 border-t border-gray-200 flex justify-between items-center">
               <div>
                 <span className="font-medium text-gray-900">
