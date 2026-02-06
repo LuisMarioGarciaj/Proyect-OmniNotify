@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Contact } from './entities/contact.entity';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
@@ -18,11 +18,17 @@ export class ContactsService {
 
   async create(dto: CreateContactDto): Promise<Contact> {
     const contact = this.contactRepository.create(dto);
-    if (dto.tagIds?.length) {
-      contact.tags = await this.tagRepository.findBy({
-        id: dto.tagIds as any,
+
+    if (dto.tagIds && dto.tagIds.length > 0) {
+      contact.tags = await this.tagRepository.find({
+        where: {
+          id: In(dto.tagIds),
+        },
       });
+    } else {
+      contact.tags = [];
     }
+
     return this.contactRepository.save(contact);
   }
 
@@ -52,9 +58,16 @@ export class ContactsService {
     Object.assign(contact, dto);
 
     if (dto.tagIds) {
-      contact.tags = await this.tagRepository.findBy({
-        id: dto.tagIds as any,
-      });
+      if (dto.tagIds.length > 0) {
+        contact.tags = await this.tagRepository.find({
+          where: {
+            id: In(dto.tagIds),
+          },
+        });
+      } else {
+        // Si mandan array vacío → quitar todas las tags
+        contact.tags = [];
+      }
     }
 
     return this.contactRepository.save(contact);

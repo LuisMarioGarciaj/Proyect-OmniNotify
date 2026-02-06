@@ -1,228 +1,290 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-
-// Entidades
-import { NotificationLog } from '../notifications/entities/notification-log.entity';
+import { NotificationLog, NotificationLogStatus } from '../notifications/entities/notification-log.entity';
 import { ScheduledNotification, ScheduledNotificationStatus } from '../notifications/entities/scheduled-notification.entity';
 import { Contact } from '../contacts/entities/contact.entity';
 import { Template } from '../templates/entities/template.entity';
-
-// Enums (Asegúrate de que las rutas sean correctas)
-import { NotificationStatus } from '../notifications/dto/send-notification.dto';
 
 @Injectable()
 export class DashboardService {
   constructor(
     @InjectRepository(NotificationLog)
     private notificationLogRepo: Repository<NotificationLog>,
-
+    
     @InjectRepository(ScheduledNotification)
     private scheduledNotificationRepo: Repository<ScheduledNotification>,
-
+    
     @InjectRepository(Contact)
     private contactRepo: Repository<Contact>,
-
+    
     @InjectRepository(Template)
     private templateRepo: Repository<Template>,
   ) {}
 
   /**
-   * Estadísticas generales optimizadas
+   * Estadísticas generales
    */
   async getGeneralStats(companyId: string) {
-    // Conteos de tablas independientes
-    const totalContacts = await this.contactRepo.count({
-      where: { companyId } as any, // 'as any' por si Contact usa snake_case aún
-    });
+    try {
+      console.log('📊 [Dashboard] Obteniendo estadísticas para company:', companyId);
 
-    const totalTemplates = await this.templateRepo.count({
-      where: { companyId } as any,
-    });
+      // Total de contactos - NOTA: Contact usa company_id (snake_case)
+      const totalContacts = await this.contactRepo.count({
+        where: { company_id: companyId } as any,
+      });
+      console.log('✅ Total contactos:', totalContacts);
 
-    // Agrupamos los conteos de logs en una sola consulta para mejorar performance
-    const logStats = await this.notificationLogRepo
-      .createQueryBuilder('log')
-      .select('log.status', 'status')
-      .addSelect('COUNT(*)', 'count')
-      .where('log.companyId = :companyId', { companyId })
-      .groupBy('log.status')
-      .getRawMany();
+      // Total de templates - NOTA: Template usa company_id (snake_case)
+      const totalTemplates = await this.templateRepo.count({
+        where: { company_id: companyId } as any,
+      });
+      console.log('✅ Total templates:', totalTemplates);
 
-    // Procesar resultados de los logs
-    let totalSent = 0;
-    let totalFailed = 0;
-    let totalNotifications = 0;
+      // NOTA: NotificationLog usa companyId (camelCase)
+      const totalSent = await this.notificationLogRepo.count({
+        where: { 
+          companyId,
+          status: NotificationLogStatus.SENT
+        },
+      });
+      console.log('✅ Total enviados:', totalSent);
 
-    logStats.forEach((stat) => {
-      const count = parseInt(stat.count);
-      totalNotifications += count;
-      if (stat.status === NotificationStatus.SENT) totalSent = count;
-      if (stat.status === NotificationStatus.FAILED) totalFailed = count;
-    });
+      const totalFailed = await this.notificationLogRepo.count({
+        where: { 
+          companyId,
+          status: NotificationLogStatus.FAILED
+        },
+      });
+      console.log('✅ Total fallidos:', totalFailed);
 
-    // Notificaciones programadas pendientes
-    const scheduledPending = await this.scheduledNotificationRepo.count({
-      where: {
-        companyId,
-        status: ScheduledNotificationStatus.SCHEDULED,
-      },
-    });
+      const totalNotifications = await this.notificationLogRepo.count({
+        where: { companyId },
+      });
+      console.log('✅ Total notificaciones:', totalNotifications);
 
-    // Tasa de éxito
-    const successRate = totalNotifications > 0 
-      ? parseFloat(((totalSent / totalNotifications) * 100).toFixed(1)) 
-      : 0;
+      // NOTA: ScheduledNotification usa companyId (camelCase)
+      const scheduledPending = await this.scheduledNotificationRepo.count({
+        where: { 
+          companyId,
+          status: ScheduledNotificationStatus.SCHEDULED,
+        },
+      });
+      console.log('✅ Programadas pendientes:', scheduledPending);
 
-    return {
-      totalContacts,
-      totalTemplates,
-      totalNotifications,
-      totalSent,
-      totalFailed,
-      scheduledPending,
-      successRate,
-    };
+      const successRate = totalNotifications > 0 
+        ? parseFloat(((totalSent / totalNotifications) * 100).toFixed(1))
+        : 0;
+
+      const result = {
+        totalContacts,
+        totalTemplates,
+        totalNotifications,
+        totalSent,
+        totalFailed,
+        scheduledPending,
+        successRate,
+      };
+
+      console.log('✅ [Dashboard] Estadísticas completas:', result);
+      return result;
+
+    } catch (error) {
+      console.error('❌ [Dashboard] Error en getGeneralStats:', error);
+      console.error('Stack:', error.stack);
+      throw error;
+    }
   }
 
   /**
    * Mensajes por canal
    */
   async getMessagesByChannel(companyId: string) {
-    const result = await this.notificationLogRepo
-      .createQueryBuilder('log')
-      .select('log.channel', 'channel')
-      .addSelect('COUNT(*)', 'count')
-      .where('log.companyId = :companyId', { companyId })
-      .groupBy('log.channel')
-      .getRawMany();
+    try {
+      console.log('📊 [Dashboard] Obteniendo mensajes por canal');
 
-    return result.map((item) => ({
-      channel: item.channel,
-      count: parseInt(item.count),
-    }));
+      const result = await this.notificationLogRepo
+        .createQueryBuilder('log')
+        .select('log.channel', 'channel')
+        .addSelect('COUNT(*)', 'count')
+        .where('log.companyId = :companyId', { companyId })
+        .groupBy('log.channel')
+        .getRawMany();
+
+      const formatted = result.map(item => ({
+        channel: item.channel,
+        count: parseInt(item.count)
+      }));
+
+      console.log('✅ Mensajes por canal:', formatted);
+      return formatted;
+
+    } catch (error) {
+      console.error('❌ [Dashboard] Error en getMessagesByChannel:', error);
+      return [];
+    }
   }
 
   /**
    * Actividad por día (últimos N días)
    */
   async getActivityByDay(companyId: string, days: number = 7) {
-    const result = await this.notificationLogRepo
-      .createQueryBuilder('log')
-      .select('DATE(log.createdAt)', 'date')
-      .addSelect('log.status', 'status')
-      .addSelect('COUNT(*)', 'count')
-      .where('log.companyId = :companyId', { companyId })
-      .andWhere('log.createdAt >= DATE_SUB(NOW(), INTERVAL :days DAY)', { days })
-      .groupBy('DATE(log.createdAt)')
-      .addGroupBy('log.status')
-      .orderBy('date', 'ASC')
-      .getRawMany();
+    try {
+      console.log(`📊 [Dashboard] Obteniendo actividad de últimos ${days} días`);
 
-    const formatted: Record<string, any> = {};
+      const result = await this.notificationLogRepo
+        .createQueryBuilder('log')
+        .select('DATE(log.createdAt)', 'date')
+        .addSelect('log.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where('log.companyId = :companyId', { companyId })
+        .andWhere('log.createdAt >= DATE_SUB(NOW(), INTERVAL :days DAY)', { days })
+        .groupBy('DATE(log.createdAt)')
+        .addGroupBy('log.status')
+        .orderBy('date', 'ASC')
+        .getRawMany();
 
-    result.forEach((item) => {
-      const date = item.date;
-      if (!formatted[date]) {
-        formatted[date] = {
-          date,
-          SENT: 0,
-          FAILED: 0,
-          PENDING: 0,
-          DELIVERED: 0,
-        };
-      }
-      formatted[date][item.status] = parseInt(item.count);
-    });
+      const formatted: Record<string, any> = {};
+      
+      result.forEach(item => {
+        const date = item.date;
+        if (!formatted[date]) {
+          formatted[date] = {
+            date,
+            SENT: 0,
+            FAILED: 0,
+            PENDING: 0,
+            DELIVERED: 0,
+          };
+        }
+        formatted[date][item.status] = parseInt(item.count);
+      });
 
-    return Object.values(formatted);
+      console.log('✅ Actividad por día:', Object.values(formatted).length, 'días');
+      return Object.values(formatted);
+
+    } catch (error) {
+      console.error('❌ [Dashboard] Error en getActivityByDay:', error);
+      return [];
+    }
   }
 
   /**
    * Notificaciones recientes
    */
   async getRecentNotifications(companyId: string, limit: number = 10) {
-    const notifications = await this.notificationLogRepo.find({
-      where: { companyId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
+    try {
+      console.log(`📊 [Dashboard] Obteniendo últimas ${limit} notificaciones`);
 
-    return notifications.map((notif) => ({
-      id: notif.id,
-      channel: notif.channel,
-      recipient: notif.recipient,
-      status: notif.status,
-      errorMessage: notif.errorMessage,
-      createdAt: notif.createdAt,
-    }));
+      const notifications = await this.notificationLogRepo.find({
+        where: { companyId },
+        order: { createdAt: 'DESC' },
+        take: limit,
+      });
+
+      const formatted = notifications.map(notif => ({
+        id: notif.id,
+        channel: notif.channel,
+        recipient: notif.recipient,
+        status: notif.status,
+        error_message: notif.errorMessage,
+        created_at: notif.createdAt,
+      }));
+
+      console.log('✅ Notificaciones recientes:', formatted.length);
+      return formatted;
+
+    } catch (error) {
+      console.error('❌ [Dashboard] Error en getRecentNotifications:', error);
+      return [];
+    }
   }
 
   /**
    * Notificaciones programadas pendientes
    */
   async getScheduledPending(companyId: string) {
-    const scheduled = await this.scheduledNotificationRepo.find({
-      where: {
-        companyId,
-        status: ScheduledNotificationStatus.SCHEDULED,
-      },
-      order: { scheduledAt: 'ASC' },
-      take: 20,
-    });
+    try {
+      console.log('📊 [Dashboard] Obteniendo programadas pendientes');
 
-    return scheduled.map((notif) => ({
-      id: notif.id,
-      channel: notif.channel,
-      recipient: notif.recipient,
-      scheduledAt: notif.scheduledAt,
-      status: notif.status,
-    }));
+      const scheduled = await this.scheduledNotificationRepo.find({
+        where: {
+          companyId,
+          status: ScheduledNotificationStatus.SCHEDULED,
+        },
+        order: { scheduledAt: 'ASC' },
+        take: 20,
+      });
+
+      const formatted = scheduled.map(notif => ({
+        id: notif.id,
+        channel: notif.channel,
+        recipient: notif.recipient,
+        scheduled_at: notif.scheduledAt,
+        status: notif.status,
+      }));
+
+      console.log('✅ Programadas pendientes:', formatted.length);
+      return formatted;
+
+    } catch (error) {
+      console.error('❌ [Dashboard] Error en getScheduledPending:', error);
+      return [];
+    }
   }
 
   /**
    * Tasa de éxito por canal
    */
   async getSuccessRate(companyId: string) {
-    const result = await this.notificationLogRepo
-      .createQueryBuilder('log')
-      .select('log.channel', 'channel')
-      .addSelect('log.status', 'status')
-      .addSelect('COUNT(*)', 'count')
-      .where('log.companyId = :companyId', { companyId })
-      .groupBy('log.channel')
-      .addGroupBy('log.status')
-      .getRawMany();
+    try {
+      console.log('📊 [Dashboard] Calculando tasa de éxito por canal');
 
-    const byChannel: Record<string, any> = {};
+      const result = await this.notificationLogRepo
+        .createQueryBuilder('log')
+        .select('log.channel', 'channel')
+        .addSelect('log.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where('log.companyId = :companyId', { companyId })
+        .groupBy('log.channel')
+        .addGroupBy('log.status')
+        .getRawMany();
 
-    result.forEach((item) => {
-      const channel = item.channel;
-      if (!byChannel[channel]) {
-        byChannel[channel] = {
-          channel,
-          SENT: 0,
-          FAILED: 0,
-          total: 0,
-          successRate: 0,
-        };
-      }
-
-      const count = parseInt(item.count);
-      if (item.status === NotificationStatus.SENT) byChannel[channel].SENT = count;
-      if (item.status === NotificationStatus.FAILED) byChannel[channel].FAILED = count;
+      const byChannel: Record<string, any> = {};
       
-      byChannel[channel].total += count;
-    });
+      result.forEach(item => {
+        const channel = item.channel;
+        if (!byChannel[channel]) {
+          byChannel[channel] = {
+            channel,
+            SENT: 0,
+            FAILED: 0,
+            total: 0,
+            successRate: 0,
+          };
+        }
+        
+        const count = parseInt(item.count);
+        byChannel[channel][item.status] = count;
+        byChannel[channel].total += count;
+      });
 
-    // Calcular tasas
-    return Object.values(byChannel).map((channelData: any) => {
-      if (channelData.total > 0) {
-        channelData.successRate = parseFloat(
-          ((channelData.SENT / channelData.total) * 100).toFixed(1),
-        );
-      }
-      return channelData;
-    });
+      // Calcular tasas de éxito
+      Object.values(byChannel).forEach((channelData: any) => {
+        if (channelData.total > 0) {
+          channelData.successRate = parseFloat(
+            ((channelData.SENT / channelData.total) * 100).toFixed(1)
+          );
+        }
+      });
+
+      const finalResult = Object.values(byChannel);
+      console.log('✅ Tasa de éxito por canal:', finalResult);
+      return finalResult;
+
+    } catch (error) {
+      console.error('❌ [Dashboard] Error en getSuccessRate:', error);
+      return [];
+    }
   }
 }

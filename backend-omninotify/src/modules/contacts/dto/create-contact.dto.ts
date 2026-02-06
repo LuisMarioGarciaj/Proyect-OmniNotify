@@ -7,9 +7,6 @@ import {
 } from 'class-validator';
 
 export class CreateContactDto {
-  @IsUUID()
-  company_id: string;
-
   @IsOptional()
   @IsString()
   name?: string;
@@ -27,5 +24,6 @@ export class CreateContactDto {
 
   @IsOptional()
   @IsArray()
+  @IsString({ each: true })
   tagIds?: string[];
 }

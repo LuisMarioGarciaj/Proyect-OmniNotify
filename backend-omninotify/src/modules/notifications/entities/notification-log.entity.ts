@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import { NotificationChannel } from '../dto/send-notification.dto';
 
+// Definimos el Enum aquí para que el Processor lo encuentre con el nombre exacto
 export enum NotificationLogStatus {
   PENDING = 'PENDING',
   SENT = 'SENT',
@@ -51,7 +52,6 @@ export class NotificationLog {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
 
-  // CORRECCIÓN: Especificar explícitamente el tipo de columna
   @Column({ name: 'job_id', type: 'varchar', length: 100, nullable: true })
   jobId: string | null;
 

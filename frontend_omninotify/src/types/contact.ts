@@ -9,6 +9,6 @@ export interface Contact {
   email?: string;
   phone?: string;
   tags?: Tag[];       
-  tag_ids?: string[]; 
+  tagIds?: string[]; 
   created_at: string;
 }

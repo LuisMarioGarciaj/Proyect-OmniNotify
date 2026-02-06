@@ -13,6 +13,8 @@ export class Provider {
   @Column({ type: 'enum', enum: NotificationChannel })
   channel: NotificationChannel;
 
+  @Column({ type: 'varchar', length: 20, default: 'ACTIVE' })
+  status: string; // 'ACTIVE', 'INACTIVE', etc.
   // Relación
   @OneToMany(() => CompanyProviderConfig, (config) => config.provider)
   company_configs: CompanyProviderConfig[];

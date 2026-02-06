@@ -35,7 +35,7 @@ export class Contact {
   // Relación many-to-many con Tags
   @ManyToMany(() => Tag, (tag) => tag.contacts)
   @JoinTable({
-    name: 'contact_tags',
+    name: 'Contact_Tags',
     joinColumn: { name: 'contact_id', referencedColumnName: 'id' },
     inverseJoinColumn: { name: 'tag_id', referencedColumnName: 'id' },
   })
