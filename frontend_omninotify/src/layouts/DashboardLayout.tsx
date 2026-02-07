@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { Bell } from 'lucide-react';
+import SessionExpiredModal from '../components/SessionExpiredModal';
+import useAuthCheck from '../hooks/useAuthCheck'; 
 
 interface UserData {
   id: string;
@@ -15,7 +17,16 @@ const DashboardLayout: React.FC = () => {
   const [user, setUser] = useState<UserData | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+   const {
+    showExpiredModal,
+    timeRemaining,
+    setShowExpiredModal,
+    handleExtendSession,
+    handleLogoutNow,
+  } = useAuthCheck();
 
+  useAuthCheck();
   useEffect(() => {
     const userData = localStorage.getItem('user_data');
     if (userData) {
@@ -23,11 +34,16 @@ const DashboardLayout: React.FC = () => {
         setUser(JSON.parse(userData));
       } catch (error) {
         console.error('Error parsing user data:', error);
+         // Si hay error al parsear, redirigir a login
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user_data');
+        navigate('/login');
       }
+    }else {
+      // Si no hay usuario, redirigir a login
+      navigate('/login');
     }
-    
-    // Escuchar cambios en el estado del sidebar (podrías usar Context o Redux)
-    // Por ahora, usaremos localStorage o un estado compartido
+      // Escuchar cambios en el estado del sidebar
     const handleStorageChange = () => {
       const isCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
       setSidebarCollapsed(isCollapsed);
@@ -35,7 +51,9 @@ const DashboardLayout: React.FC = () => {
     
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [navigate]);
+    
+ 
 
   // Obtener el título de la página actual
   const getPageTitle = () => {
@@ -58,6 +76,14 @@ const DashboardLayout: React.FC = () => {
           id: user.id,
           company_id: user.company_id
         } : null} 
+      />
+        {/* Modal de sesión por expirar */}
+      <SessionExpiredModal
+        isOpen={showExpiredModal}
+        onClose={() => setShowExpiredModal(false)}
+        countdown={timeRemaining}
+        onExtend={handleExtendSession}
+        onLogout={handleLogoutNow}
       />
       
       {/* Main Content - Se adapta dinámicamente */}

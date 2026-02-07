@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  MessageSquare, Send, Loader2, CheckCircle, AlertCircle,
-  Smartphone, User, Calendar, Clock, Bell, Zap,
-  Users, ChevronRight, X, Plus, Trash2, RefreshCw,
-  Eye, EyeOff, DollarSign
+  MessageSquare, Loader2, AlertCircle,
+  DollarSign, RefreshCw, Eye, EyeOff
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -22,20 +20,6 @@ interface SmsSettings {
   isActive: boolean;
 }
 
-interface TestSmsRequest {
-  to: string;
-  text: string;
-  provider: 'vonage' | 'twilio';
-  apiKey: string;
-  apiSecret: string;
-  fromNumber?: string;
-  metadata?: {
-    companyName?: string;
-    companyId?: string;
-    testType?: string;
-  };
-}
-
 interface SmsBalance {
   value: number;
   currency: string;
@@ -50,8 +34,8 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
   // Estados para configuración
   const [settings, setSettings] = useState<SmsSettings>({
     provider: 'vonage',
-    apiKey: '84a24d93',
-    apiSecret: '46Xump31CGyK88hf',
+    apiKey: 'D9zUv9!Yf',
+    apiSecret: '745dd9da',
     fromNumber: 'OmniNotify',
     isActive: true,
   });
@@ -59,51 +43,77 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
   // Estados para UI
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testPhone, setTestPhone] = useState('+34612345678');
-  const [testText, setTestText] = useState('');
-  const [testResult, setTestResult] = useState<any>(null);
   const [balance, setBalance] = useState<SmsBalance | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<string>('');
   
   // Estados para mostrar/ocultar contraseñas
   const [showApiKey, setShowApiKey] = useState(false);
   const [showApiSecret, setShowApiSecret] = useState(false);
   
-  // Estados para programación
-  const [scheduleType, setScheduleType] = useState<'now' | 'later'>('now');
-  const [scheduleDate, setScheduleDate] = useState<string>('');
-  const [scheduleTime, setScheduleTime] = useState<string>('');
-  
   // Estados para mensajes
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Inicializar fechas
+  // Ref para el intervalo de actualización automática - CORREGIDO: usar number en lugar de NodeJS.Timeout
+  const refreshIntervalRef = useRef<number | null>(null);
+
+  // Inicializar
   useEffect(() => {
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    setScheduleDate(tomorrow.toISOString().split('T')[0]);
-    setScheduleTime('09:00');
-    
     loadSettings();
+    
+    // Limpiar intervalo al desmontar
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+    };
   }, [companyId]);
 
-  // Cargar configuración
+  // Cargar configuración y balance inicial
   const loadSettings = async () => {
     setLoading(true);
     try {
       const savedSettings = localStorage.getItem(`sms_settings_${companyId}`);
       if (savedSettings) {
-        setSettings(JSON.parse(savedSettings));
+        const parsedSettings = JSON.parse(savedSettings);
+        setSettings(parsedSettings);
+        
+        // Cargar balance automáticamente si hay credenciales
+        if (parsedSettings.apiKey && parsedSettings.apiSecret) {
+          await getBalance(parsedSettings);
+        }
       }
     } catch (error) {
       console.error('Error cargando configuración SMS:', error);
+      showMessage('Error cargando configuración SMS', 'error');
     } finally {
       setLoading(false);
     }
   };
+
+  // Configurar actualización automática del balance
+  useEffect(() => {
+    if (settings.apiKey && settings.apiSecret) {
+      // Limpiar intervalo anterior si existe
+      if (refreshIntervalRef.current !== null) {
+        window.clearInterval(refreshIntervalRef.current);
+      }
+      
+      // Configurar intervalo para actualizar cada 5 minutos
+      refreshIntervalRef.current = window.setInterval(() => {
+        getBalance(settings);
+      }, 5 * 60 * 1000); // 5 minutos
+      
+      // Actualizar inmediatamente al montar
+      getBalance(settings);
+    }
+    
+    return () => {
+      if (refreshIntervalRef.current !== null) {
+        window.clearInterval(refreshIntervalRef.current);
+      }
+    };
+  }, [settings.apiKey, settings.apiSecret, settings.provider]);
 
   // Guardar configuración
   const handleSave = async () => {
@@ -111,6 +121,11 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
     try {
       localStorage.setItem(`sms_settings_${companyId}`, JSON.stringify(settings));
       showMessage('Configuración SMS guardada exitosamente', 'success');
+      
+      // Actualizar balance después de guardar
+      if (settings.apiKey && settings.apiSecret) {
+        await getBalance(settings);
+      }
     } catch (error) {
       showMessage('Error guardando configuración SMS', 'error');
     } finally {
@@ -118,68 +133,11 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
     }
   };
 
-  // Probar SMS
-  const handleTest = async () => {
-    if (!testPhone || !testPhone.trim()) {
-      showMessage('Por favor ingresa un número de teléfono', 'error');
-      return;
-    }
-
-    if (!settings.apiKey || !settings.apiSecret) {
-      showMessage('Por favor configura tu API Key y Secret de Vonage', 'error');
-      return;
-    }
-
-    setTesting(true);
-    setTestResult(null);
-
-    try {
-      const testMessage = testText || generateTestMessage(companyName);
-      
-      const testRequest: TestSmsRequest = {
-        to: testPhone,
-        text: testMessage,
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        apiSecret: settings.apiSecret,
-        fromNumber: settings.fromNumber,
-        metadata: {
-          companyName,
-          companyId,
-          testType: 'connection_test'
-        }
-      };
-
-      console.log('📱 Enviando SMS de prueba...', testRequest);
-
-      const response = await axios.post(`${API_BASE_URL}/sms/test`, testRequest);
-      
-      if (response.data.success) {
-        setTestResult(response.data);
-        showMessage('SMS de prueba enviado exitosamente', 'success');
-      } else {
-        setTestResult(response.data);
-        showMessage(`Error: ${response.data.error || response.data.message}`, 'error');
-      }
-    } catch (error: any) {
-      console.error('❌ Error enviando SMS de prueba:', error);
-      
-      setTestResult({
-        success: false,
-        message: 'Error enviando SMS de prueba',
-        error: error.response?.data?.error || error.message
-      });
-      
-      showMessage('Error enviando SMS de prueba', 'error');
-    } finally {
-      setTesting(false);
-    }
-  };
-
   // Obtener balance
-  const handleGetBalance = async () => {
-    if (!settings.apiKey || !settings.apiSecret) {
-      showMessage('Por favor configura tu API Key y Secret de Vonage', 'error');
+  const getBalance = async (currentSettings?: SmsSettings) => {
+    const settingsToUse = currentSettings || settings;
+    
+    if (!settingsToUse.apiKey || !settingsToUse.apiSecret) {
       return;
     }
 
@@ -187,11 +145,9 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
     try {
       const response = await axios.get(`${API_BASE_URL}/sms/balance/${companyId}`, {
         params: {
-          provider: settings.provider
+          provider: settingsToUse.provider
         }
       });
-
-      console.log('💰 Respuesta de balance:', response.data);
 
       if (response.data.success) {
         const balanceData = response.data.balance;
@@ -217,9 +173,28 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
         }
         
         setBalance(formattedBalance);
-        showMessage(`Balance obtenido: ${formattedBalance.formatted}`, 'success');
+        setLastUpdate(new Date().toLocaleTimeString('es-ES', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          second: '2-digit' 
+        }));
       } else {
-        showMessage(response.data.message || 'Error obteniendo balance', 'error');
+        // Si hay error pero estamos en desarrollo, usar datos de ejemplo
+        if (import.meta.env.DEV) {
+          const mockBalance: SmsBalance = {
+            value: 12.3456789,
+            currency: 'USD',
+            formatted: '$12.3456789',
+            rawValue: 12.3456789
+          };
+          setBalance(mockBalance);
+          setLastUpdate(new Date().toLocaleTimeString('es-ES', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            second: '2-digit' 
+          }));
+          showMessage('Balance de ejemplo cargado (modo desarrollo)', 'info');
+        }
       }
     } catch (error: any) {
       console.error('Error obteniendo balance:', error);
@@ -233,13 +208,25 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
           rawValue: 12.3456789
         };
         setBalance(mockBalance);
+        setLastUpdate(new Date().toLocaleTimeString('es-ES', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          second: '2-digit' 
+        }));
         showMessage('Balance de ejemplo cargado (modo desarrollo)', 'info');
       } else {
-        showMessage('Error obteniendo balance: ' + error.message, 'error');
+        console.warn('Error obteniendo balance:', error.message);
+        showMessage('Error obteniendo balance. Verifica tus credenciales.', 'error');
       }
     } finally {
       setLoadingBalance(false);
     }
+  };
+
+  // Función para forzar actualización manual
+  const handleManualRefresh = async () => {
+    await getBalance();
+    showMessage('Balance actualizado manualmente', 'success');
   };
 
   // Función para formatear balance con todos los decimales
@@ -260,116 +247,12 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
     }
   };
 
-  // Enviar SMS programado
-  const handleSendScheduled = async () => {
-    if (!testPhone || !testText) {
-      showMessage('Por favor ingresa número y mensaje', 'error');
-      return;
-    }
-
-    if (!settings.apiKey || !settings.apiSecret) {
-      showMessage('Por favor configura tu API Key y Secret de Vonage', 'error');
-      return;
-    }
-
-    if (scheduleType === 'later') {
-      const scheduleDateTime = localToUTCString(scheduleDate, scheduleTime);
-      const scheduledTime = new Date(scheduleDateTime);
-      const now = new Date();
-      
-      if (scheduledTime <= now) {
-        showMessage('La fecha programada debe ser futura', 'error');
-        return;
-      }
-    }
-
-    setTesting(true);
-
-    try {
-      const payload = {
-        to: testPhone,
-        text: testText,
-        companyId,
-        provider: settings.provider,
-        config: {
-          apiKey: settings.apiKey,
-          apiSecret: settings.apiSecret,
-          fromNumber: settings.fromNumber
-        },
-        schedule: scheduleType === 'later' ? localToUTCString(scheduleDate, scheduleTime) : undefined
-      };
-
-      const response = await axios.post(`${API_BASE_URL}/sms/send-direct`, payload);
-      
-      if (response.data.success) {
-        showMessage(
-          scheduleType === 'now' 
-            ? 'SMS enviado exitosamente' 
-            : `SMS programado para ${formatLocalDate(scheduleDate, scheduleTime)}`,
-          'success'
-        );
-        setTestResult(response.data);
-      } else {
-        showMessage(`Error: ${response.data.message}`, 'error');
-      }
-    } catch (error: any) {
-      console.error('Error enviando SMS:', error);
-      showMessage('Error enviando SMS', 'error');
-    } finally {
-      setTesting(false);
-    }
-  };
-
   // Helper functions
-  const generateTestMessage = (company: string): string => {
-    const timestamp = new Date().toLocaleString('es-ES');
-    return `✅ Prueba de SMS - ${company}\n\nHora: ${timestamp}\nEstado: CONEXIÓN EXITOSA\n\nEste SMS confirma que la configuración de notificaciones por SMS de ${company} está funcionando correctamente.`;
-  };
-
-  const localToUTCString = (dateStr: string, timeStr: string): string => {
-    const localDate = new Date(`${dateStr}T${timeStr}`);
-    return localDate.toISOString();
-  };
-
-  const formatLocalDate = (dateString: string, timeString?: string): string => {
-    const dateTimeString = timeString ? `${dateString}T${timeString}` : dateString;
-    const date = new Date(dateTimeString);
-    
-    const formattedDate = date.toLocaleDateString('es-ES', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-    
-    if (timeString) {
-      const formattedTime = date.toLocaleTimeString('es-ES', {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      return `${formattedDate} a las ${formattedTime}`;
-    }
-    
-    return formattedDate;
-  };
-
   const showMessage = (text: string, type: 'success' | 'error' | 'info') => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 5000);
   };
 
-  const validatePhoneNumber = (phone: string): boolean => {
-    const e164Regex = /^\+[1-9]\d{1,14}$/;
-    return e164Regex.test(phone);
-  };
-
-  const formatPhoneNumber = (phone: string): string => {
-    if (phone.startsWith('+')) return phone;
-    if (phone.startsWith('00')) return `+${phone.substring(2)}`;
-    return `+34${phone.replace(/^0/, '')}`;
-  };
-
-  // Función para copiar al portapapeles
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text).then(() => {
       showMessage(`${label} copiado al portapapeles`, 'success');
@@ -434,7 +317,9 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
                   <div className="flex flex-col">
                     <span className="text-xs text-green-600 font-medium">Balance disponible</span>
                     <span className="font-bold text-green-700 text-lg">{balance.formatted}</span>
-                    <span className="text-xs text-green-500">Valor exacto: {balance.rawValue} {balance.currency}</span>
+                    <span className="text-xs text-green-500">
+                      Actualizado: {lastUpdate || 'Cargando...'}
+                    </span>
                   </div>
                 </div>
               )}
@@ -444,14 +329,14 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
 
         <div className="flex flex-col sm:flex-row gap-3">
           <button
-            onClick={handleGetBalance}
+            onClick={handleManualRefresh}
             disabled={loadingBalance}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 min-w-[140px]"
           >
             {loadingBalance ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Consultando...
+                Actualizando...
               </>
             ) : (
               <>
@@ -644,275 +529,72 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
             </div>
           </div>
 
-          {/* Prueba de SMS */}
+          {/* Estado del Sistema */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-xl font-semibold text-gray-800">Prueba de SMS</h2>
-              <p className="text-gray-600 text-sm mt-1">Envía un SMS de prueba para verificar la configuración</p>
+            <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-cyan-50">
+              <h2 className="text-xl font-semibold text-gray-800">Estado del Sistema</h2>
+              <p className="text-gray-600 text-sm mt-1">Información sobre el servicio de SMS</p>
             </div>
             
             <div className="p-6">
               <div className="space-y-6">
-                {/* Número de destino */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <Smartphone className="w-4 h-4 inline mr-2" />
-                    Número de teléfono (E.164)
-                  </label>
-                  <div className="flex gap-3">
-                    <input
-                      type="tel"
-                      value={testPhone}
-                      onChange={(e) => setTestPhone(e.target.value)}
-                      placeholder="+34612345678"
-                      className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    />
-                    <button
-                      onClick={() => setTestPhone(formatPhoneNumber(testPhone))}
-                      className="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
-                    >
-                      Formatear
-                    </button>
-                  </div>
-                  {testPhone && !validatePhoneNumber(testPhone) && (
-                    <p className="mt-2 text-sm text-red-600">
-                      Formato inválido. Debe ser: +[código de país][número]
-                    </p>
-                  )}
-                </div>
-
-                {/* Mensaje */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <MessageSquare className="w-4 h-4 inline mr-2" />
-                    Mensaje de prueba
-                  </label>
-                  <textarea
-                    value={testText}
-                    onChange={(e) => setTestText(e.target.value)}
-                    placeholder={generateTestMessage(companyName)}
-                    rows={4}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                  />
-                  <div className="flex justify-between mt-2">
-                    <span className="text-sm text-gray-500">
-                      {testText.length} caracteres
-                    </span>
-                    <span className={`text-sm ${
-                      testText.length > 160 ? 'text-red-600 font-bold' : 'text-gray-500'
-                    }`}>
-                      {testText.length > 160 ? 'Múltiples SMS' : '1 SMS'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Programación */}
+                {/* Estado de conexión */}
                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <h3 className="font-medium text-gray-700 mb-3">⏰ Programación (Opcional)</h3>
-                  
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <button
-                        onClick={() => setScheduleType('now')}
-                        className={`px-4 py-3 rounded-lg border transition flex items-center justify-center gap-2 ${
-                          scheduleType === 'now'
-                            ? 'border-green-500 bg-green-50 text-green-700'
-                            : 'border-gray-300 hover:border-gray-400 text-gray-700'
-                        }`}
-                      >
-                        <Zap className="w-4 h-4" />
-                        <span>Enviar Ahora</span>
-                      </button>
-                      
-                      <button
-                        onClick={() => setScheduleType('later')}
-                        className={`px-4 py-3 rounded-lg border transition flex items-center justify-center gap-2 ${
-                          scheduleType === 'later'
-                            ? 'border-green-500 bg-green-50 text-green-700'
-                            : 'border-gray-300 hover:border-gray-400 text-gray-700'
-                        }`}
-                      >
-                        <Calendar className="w-4 h-4" />
-                        <span>Programar</span>
-                      </button>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-medium text-gray-700">Estado de conexión</h3>
+                      <p className="text-sm text-gray-500">Conexión con Vonage API</p>
                     </div>
-
-                    {scheduleType === 'later' && (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              <Calendar className="w-4 h-4 inline mr-2" />
-                              Fecha
-                            </label>
-                            <input
-                              type="date"
-                              value={scheduleDate}
-                              onChange={(e) => setScheduleDate(e.target.value)}
-                              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                            />
-                          </div>
-                          
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              <Clock className="w-4 h-4 inline mr-2" />
-                              Hora
-                            </label>
-                            <input
-                              type="time"
-                              value={scheduleTime}
-                              onChange={(e) => setScheduleTime(e.target.value)}
-                              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                            />
-                          </div>
+                    <div className="flex items-center gap-2">
+                      {loadingBalance ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span className="text-sm text-gray-500">Verificando...</span>
                         </div>
-                        
-                        {scheduleDate && scheduleTime && (
-                          <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                            <div className="flex items-center gap-2">
-                              <Bell className="w-4 h-4 text-blue-600" />
-                              <span className="font-medium text-blue-700">Programado para:</span>
-                              <span className="text-blue-600">
-                                {formatLocalDate(scheduleDate, scheduleTime)}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      ) : balance ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                          <span className="text-sm text-green-600 font-medium">Conectado</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                          <span className="text-sm text-red-600 font-medium">Sin conexión</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* Botones de acción */}
-                <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-gray-200">
-                  <button
-                    onClick={handleTest}
-                    disabled={testing || !validatePhoneNumber(testPhone) || !settings.apiKey || !settings.apiSecret}
-                    className={`px-6 py-3 rounded-lg flex items-center justify-center gap-2 transition-colors flex-1 ${
-                      !testing && validatePhoneNumber(testPhone) && settings.apiKey && settings.apiSecret
-                        ? 'bg-green-600 text-white hover:bg-green-700'
-                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {testing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Enviando prueba...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-5 h-5" />
-                        Enviar SMS de Prueba
-                      </>
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={handleSendScheduled}
-                    disabled={testing || !validatePhoneNumber(testPhone) || !testText.trim() || !settings.apiKey || !settings.apiSecret}
-                    className={`px-6 py-3 rounded-lg flex items-center justify-center gap-2 transition-colors flex-1 ${
-                      !testing && validatePhoneNumber(testPhone) && testText.trim() && settings.apiKey && settings.apiSecret
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {scheduleType === 'now' ? (
-                      <>
-                        <Zap className="w-5 h-5" />
-                        Enviar SMS Ahora
-                      </>
-                    ) : (
-                      <>
-                        <Calendar className="w-5 h-5" />
-                        Programar SMS
-                      </>
-                    )}
-                  </button>
+                {/* Última actualización */}
+                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-medium text-gray-700">Última actualización</h3>
+                      <p className="text-sm text-gray-500">Balance y estado del sistema</p>
+                    </div>
+                    <div>
+                      <span className="text-sm text-gray-600">{lastUpdate || 'Nunca'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Configuración de actualización automática */}
+                <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                  <div className="flex items-start gap-3">
+                    <RefreshCw className="w-5 h-5 text-green-600 mt-0.5" />
+                    <div>
+                      <h3 className="font-medium text-green-800">Actualización automática</h3>
+                      <p className="text-sm text-green-700 mt-1">
+                        El balance se actualiza automáticamente cada 5 minutos.
+                        También puedes actualizar manualmente usando el botón "Actualizar Balance".
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-
-          {/* Resultado de la prueba */}
-          {testResult && (
-            <div className={`bg-white rounded-xl shadow-sm border ${
-              testResult.success 
-                ? 'border-green-200' 
-                : 'border-red-200'
-            } overflow-hidden`}>
-              <div className={`p-6 ${
-                testResult.success 
-                  ? 'bg-green-50 border-b border-green-200' 
-                  : 'bg-red-50 border-b border-red-200'
-              }`}>
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${
-                    testResult.success ? 'bg-green-100' : 'bg-red-100'
-                  }`}>
-                    {testResult.success ? (
-                      <CheckCircle className="w-6 h-6 text-green-600" />
-                    ) : (
-                      <AlertCircle className="w-6 h-6 text-red-600" />
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-gray-900 text-lg">
-                      {testResult.success ? '✅ Prueba Exitosa' : '❌ Error en la Prueba'}
-                    </h3>
-                    <p className={testResult.success ? 'text-green-700' : 'text-red-700'}>
-                      {testResult.message}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="p-6">
-                {testResult.result && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm text-gray-500">Proveedor</p>
-                        <p className="font-medium">{testResult.result.provider}</p>
-                      </div>
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm text-gray-500">Destinatario</p>
-                        <p className="font-medium">{testResult.result.recipient}</p>
-                      </div>
-                    </div>
-                    
-                    {testResult.result.messageId && (
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm text-gray-500">ID del Mensaje</p>
-                        <p className="font-medium font-mono">{testResult.result.messageId}</p>
-                      </div>
-                    )}
-                    
-                    {testResult.result.remainingBalance && (
-                      <div className="bg-green-50 p-3 rounded-lg border border-green-200">
-                        <p className="text-sm text-green-600">💰 Balance restante:</p>
-                        <p className="font-bold text-green-700">
-                          {formatBalanceWithFullDecimals(
-                            testResult.result.remainingBalance,
-                            testResult.result.currency || 'USD'
-                          )}
-                        </p>
-                        <p className="text-xs text-green-500 mt-1">
-                          Valor exacto: {testResult.result.remainingBalance} {testResult.result.currency || 'USD'}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                {testResult.error && (
-                  <div className="mt-4 p-4 bg-red-50 rounded-lg border border-red-200">
-                    <p className="font-medium text-red-800">Detalles del error:</p>
-                    <p className="text-sm text-red-600 mt-1">{testResult.error}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Panel derecho: Información y ayuda */}
@@ -952,14 +634,14 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
                   
                   <div className="flex justify-between items-center p-2">
                     <span className="text-sm text-gray-600">Última actualización:</span>
-                    <span className="text-xs text-gray-500">Ahora</span>
+                    <span className="text-sm text-gray-500">{lastUpdate || 'Nunca'}</span>
                   </div>
                 </div>
               </div>
               
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <button
-                  onClick={handleGetBalance}
+                  onClick={handleManualRefresh}
                   disabled={loadingBalance}
                   className="w-full text-center px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
                 >
@@ -971,7 +653,7 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
                   ) : (
                     <>
                       <RefreshCw className="w-4 h-4" />
-                      Actualizar Balance
+                      Actualizar Ahora
                     </>
                   )}
                 </button>
@@ -1040,19 +722,12 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
               </button>
               
               <button
-                onClick={() => setTestPhone('+34612345678')}
-                className="w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-left flex items-center gap-3"
+                onClick={handleManualRefresh}
+                disabled={loadingBalance}
+                className="w-full px-4 py-3 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition text-left flex items-center gap-3 disabled:opacity-50"
               >
-                <User className="w-4 h-4" />
-                <span>Usar número de ejemplo</span>
-              </button>
-              
-              <button
-                onClick={() => setTestText(generateTestMessage(companyName))}
-                className="w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-left flex items-center gap-3"
-              >
-                <MessageSquare className="w-4 h-4" />
-                <span>Generar mensaje de prueba</span>
+                <RefreshCw className="w-4 h-4" />
+                <span>Actualizar Balance Manualmente</span>
               </button>
               
               <button
@@ -1062,7 +737,7 @@ const SMSConfiguration: React.FC<SMSConfigurationProps> = ({
                   }
                 }}
                 disabled={!settings.apiKey || !settings.apiSecret}
-                className="w-full px-4 py-3 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition text-left flex items-center gap-3 disabled:opacity-50"
+                className="w-full px-4 py-3 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition text-left flex items-center gap-3 disabled:opacity-50"
               >
                 <span>📋</span>
                 <span>Copiar todas las credenciales</span>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginForm from './components/LoginForm';
+import RegisterForm from './components/RegisterForm';
 import ProtectedRoute from './components/ProtectedRoute'; // Asegúrate de usarlo para proteger las rutas
 import DashboardLayout from './layouts/DashboardLayout';
 import DashboardPage from './pages/Dashboard';
@@ -21,6 +22,7 @@ function App() {
     <Router>
       <Routes>
         <Route path="/login" element={<LoginForm />} />
+        <Route path="/register" element={<RegisterForm />} />
         
         {/* Rutas protegidas dentro del DashboardLayout */}
         <Route 

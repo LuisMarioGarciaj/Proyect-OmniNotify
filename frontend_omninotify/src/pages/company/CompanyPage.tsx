@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, Save, Building, Loader2 } from 'lucide-react';
+import { Upload, Save, Building, Loader2, Info } from 'lucide-react';
 import { getCompany, updateCompany } from '../../services/company.service';
 
 interface CompanyPageProps {
@@ -8,59 +8,89 @@ interface CompanyPageProps {
     company_id?: string;
     name?: string;
     email?: string;
+    role?: string;
   } | null;
 }
 
 const CompanyPage: React.FC<CompanyPageProps> = ({ user }) => {
   const [name, setName] = useState('');
+  const [initialName, setInitialName] = useState('');
   const [logoB64, setLogoB64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error'|'info' } | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
 
-  // 1. Cargar datos usando el Service (estilo fetch)
-  // 1. Cargar datos con manejo de "Empresa no encontrada"
-useEffect(() => {
-  const fetchCompanyData = async () => {
-    if (!user?.company_id) {
-      setFetching(false);
-      return;
-    }
-    
-    try {
-      const data = await getCompany(user.company_id);
-      setName(data.name || '');
-      setLogoB64(data.logo || null);
-    } catch (error: any) {
-      // SI EL ERROR ES 404, NO LANZAMOS ALERT, SOLO LOGUEAMOS
-      if (error.message.includes('404')) {
-        console.warn('ℹ️ La empresa no existe aún. Puedes crearla ahora.');
-      } else {
-        console.error('Error al cargar datos:', error.message);
+  // Cargar datos de la empresa
+  useEffect(() => {
+    const fetchCompanyData = async () => {
+      if (!user?.company_id) {
+        setFetching(false);
+        return;
       }
-    } finally {
-      setFetching(false);
-    }
-  };
+      
+      try {
+        const data = await getCompany(user.company_id);
+        setName(data.name || '');
+        setInitialName(data.name || '');
+        setLogoB64(data.logo || null);
+        
+        // Mostrar mensaje si la empresa tiene nombre por defecto
+        if (data.name && data.name.includes('Empresa de')) {
+          setMessage({
+            text: 'Tu empresa fue creada automáticamente. ¡Personaliza el nombre y logo!',
+            type: 'info'
+          });
+        }
+      } catch (error: any) {
+        // Si es 404, la empresa aún no existe (no debería pasar con el registro automático)
+        if (error.message.includes('404')) {
+          setName('Mi Empresa');
+          setMessage({
+            text: 'Configura el nombre y logo de tu empresa para comenzar.',
+            type: 'info'
+          });
+        } else {
+          console.error('Error al cargar datos:', error.message);
+          setMessage({
+            text: 'Error al cargar los datos de la empresa',
+            type: 'error'
+          });
+        }
+      } finally {
+        setFetching(false);
+      }
+    };
 
-  fetchCompanyData();
-}, [user?.company_id]);
+    fetchCompanyData();
+  }, [user?.company_id]);
 
-  // 2. Manejar el Dropzone (Imagen a Base64)
+  // Manejar el Dropzone para imágenes
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     
     // Validar tamaño (2MB)
     if (file.size > 2000000) {
-      alert("La imagen es muy pesada (máx 2MB)");
+      setMessage({
+        text: "La imagen es muy pesada (máximo 2MB)",
+        type: 'error'
+      });
       return;
     }
 
     const reader = new FileReader();
     reader.onload = () => {
       setLogoB64(reader.result as string);
+      setMessage({
+        text: "Logo cargado correctamente. ¡No olvides guardar los cambios!",
+        type: 'success'
+      });
     };
     reader.onerror = () => {
-      alert("Error al leer el archivo");
+      setMessage({
+        text: "Error al leer el archivo",
+        type: 'error'
+      });
     };
     reader.readAsDataURL(file);
   }, []);
@@ -71,25 +101,55 @@ useEffect(() => {
     multiple: false 
   });
 
-  // 3. Guardar cambios usando el Service
+  // Guardar cambios
   const handleSave = async () => {
     if (!user?.company_id) {
-      alert('No se encontró el ID de la empresa');
+      setMessage({
+        text: 'No se encontró el ID de la empresa',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (!name.trim()) {
+      setMessage({
+        text: 'El nombre de la empresa es requerido',
+        type: 'error'
+      });
       return;
     }
 
     setLoading(true);
     try {
       await updateCompany(user.company_id, { 
-        name, 
+        name: name.trim(), 
         logo: logoB64 || undefined 
       });
-      alert('✅ Configuración guardada correctamente');
+      
+      setInitialName(name.trim());
+      setMessage({
+        text: '✅ Configuración guardada correctamente',
+        type: 'success'
+      });
+      
+      // Actualizar el nombre en localStorage si es necesario
+      const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
+      if (userData.company_name !== name) {
+        // Podrías actualizar algún campo relacionado si lo necesitas
+      }
     } catch (error: any) {
-      alert('❌ Error: ' + error.message);
+      setMessage({
+        text: '❌ Error: ' + error.message,
+        type: 'error'
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCancelEdit = () => {
+    setName(initialName);
+    setIsEditingName(false);
   };
 
   if (fetching) {
@@ -110,18 +170,61 @@ useEffect(() => {
         <p className="text-gray-500">Gestiona el nombre y la identidad visual que verán tus clientes.</p>
       </div>
 
+      {/* Mensaje de estado */}
+      {message && (
+        <div className={`mb-6 p-4 rounded-lg ${message.type === 'success' 
+          ? 'bg-green-50 text-green-800 border border-green-200' 
+          : message.type === 'error'
+          ? 'bg-red-50 text-red-800 border border-red-200'
+          : 'bg-blue-50 text-blue-800 border border-blue-200'
+        }`}>
+          <div className="flex items-center">
+            {message.type === 'success' ? (
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
+            ) : message.type === 'error' ? (
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            ) : (
+              <Info className="w-5 h-5 mr-2" />
+            )}
+            <span className="font-medium">{message.text}</span>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         {/* Panel Izquierdo: Formulario */}
         <div className="md:col-span-2 space-y-6 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Nombre Comercial</label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-semibold text-gray-700">Nombre Comercial</label>
+              {name !== initialName && (
+                <button
+                  onClick={handleCancelEdit}
+                  className="text-sm text-gray-500 hover:text-gray-700"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
             <input 
               type="text" 
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (e.target.value !== initialName) {
+                  setIsEditingName(true);
+                }
+              }}
               placeholder="Ej. Mi Negocio S.A."
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition outline-none"
             />
+            <p className="text-xs text-gray-500 mt-2">
+              Este nombre aparecerá en las notificaciones que envíes a tus clientes.
+            </p>
           </div>
 
           <div>
@@ -145,16 +248,18 @@ useEffect(() => {
           <div className="pt-4">
             <button 
               onClick={handleSave}
-              disabled={loading || !name}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-100 disabled:opacity-50 disabled:shadow-none"
+              disabled={loading || (!name.trim()) || (name === initialName && !logoB64)}
+              className={`w-full ${(name.trim() && (name !== initialName || logoB64)) 
+                ? 'bg-blue-600 hover:bg-blue-700' 
+                : 'bg-gray-400 cursor-not-allowed'} text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg disabled:shadow-none`}
             >
               {loading ? <Loader2 className="animate-spin" /> : <Save size={20} />}
-              Guardar Cambios
+              {name === initialName && !logoB64 ? 'Sin cambios para guardar' : 'Guardar Cambios'}
             </button>
           </div>
         </div>
 
-        {/* Panel Derecho: Vista Previa Realtime */}
+        {/* Panel Derecho: Vista Previa */}
         <div className="space-y-4">
           <h3 className="font-semibold text-gray-700 ml-1">Vista Previa</h3>
           <div className="bg-white border border-gray-100 rounded-2xl p-6 flex flex-col items-center text-center shadow-sm">
@@ -183,6 +288,31 @@ useEffect(() => {
             <p className="text-xs text-blue-700 leading-relaxed">
               <strong>Nota:</strong> Este logo aparecerá en el encabezado de tus notificaciones y en tu panel principal.
             </p>
+          </div>
+
+          {/* Información de la empresa */}
+          <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">Información del Sistema</h4>
+            <div className="space-y-2 text-xs text-gray-600">
+              <div className="flex justify-between">
+                <span>ID de Empresa:</span>
+                <span className="font-mono bg-gray-100 px-2 py-1 rounded">
+                  {user?.company_id ? user.company_id.substring(0, 8) + '...' : 'No disponible'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Creado por:</span>
+                <span className="font-medium">{user?.name || 'Usuario'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Rol:</span>
+                <span className={`px-2 py-0.5 rounded-full ${user?.role === 'ADMIN' 
+                  ? 'bg-purple-100 text-purple-800' 
+                  : 'bg-blue-100 text-blue-800'}`}>
+                  {user?.role === 'ADMIN' ? 'Administrador' : 'Operador'}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

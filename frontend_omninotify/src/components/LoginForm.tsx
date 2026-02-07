@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom'; // <-- AÑADE ESTO
+import { useNavigate ,Link} from 'react-router-dom'; // <-- AÑADE ESTO
 
 interface LoginFormData {
     email: string;
@@ -436,9 +436,9 @@ const LoginForm: React.FC = () => {
                         <div className="mt-8 text-center">
                             <p className="text-gray-600">
                                 {t.noAccount}{' '}
-                                <a href="#" className="text-blue-600 font-semibold hover:text-blue-800 transition">
+                                <Link to="/register" className="text-blue-600 font-semibold hover:text-blue-800 transition">
                                     {t.registerHere}
-                                </a>
+                                </Link>
                             </p>
                         </div>
                     </div>

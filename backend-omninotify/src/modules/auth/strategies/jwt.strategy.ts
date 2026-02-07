@@ -13,6 +13,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) {
+      throw new Error('Token expired');
+    }
     console.log('🔍 JWT Payload recibido:', payload);
     return {
       id: payload.sub,
