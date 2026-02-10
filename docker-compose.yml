@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend-omninotify
+    container_name: omninotify-backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./backend-omninotify/.env
+    volumes:
+      - ./backend-omninotify:/app
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend_omninotify
+    container_name: omninotify-frontend
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./frontend_omninotify/.env
+    volumes:
+      - ./frontend_omninotify:/app
+      - /app/node_modules
+    restart: unless-stopped
