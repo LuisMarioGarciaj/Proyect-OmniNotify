@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Mail, ArrowLeft, Loader2, CheckCircle, AlertCircle,
-  Users, FileText, User, X, Clock, Phone, Tag
+  Users, FileText, User, X, Clock, Phone, Tag, MessageCircle
 } from 'lucide-react';
 import TemplateSelectionModal from './TemplateSelectionModal';
 import ContactsSelectionModal from './ContactsSelectionModal';
@@ -36,8 +36,9 @@ interface ContactGroup {
   company_id: string;
 }
 
+// CORREGIDO: Variables con propiedades opcionales pero tipo base string
 interface Variables {
-  [key: string]: string;
+  [key: string]: string | undefined;  // Cambiado para aceptar undefined
   nombre: string;
   email: string;
   telefono: string;
@@ -47,6 +48,8 @@ interface Variables {
   monto: string;
   fechaLimite: string;
   numeroFactura: string;
+  mediaUrl?: string;
+  mediaType?: string;
 }
 
 interface NotificationResult {
@@ -55,7 +58,7 @@ interface NotificationResult {
   data?: any;
   error?: string;
   scheduled: boolean;
-  channel: 'EMAIL' | 'SMS';
+  channel: 'EMAIL' | 'SMS' | 'WHATSAPP';
 }
 
 const NotificationsSend: React.FC = () => {
@@ -85,7 +88,7 @@ const NotificationsSend: React.FC = () => {
     total?: number;
     successful?: number;
     scheduled?: boolean;
-    channel?: 'EMAIL' | 'SMS';
+    channel?: 'EMAIL' | 'SMS' | 'WHATSAPP';
     error?: string;
   } | null>(null);
   
@@ -101,7 +104,11 @@ const NotificationsSend: React.FC = () => {
   const [scheduleDate, setScheduleDate] = useState<string>('');
   const [scheduleTime, setScheduleTime] = useState<string>('09:00');
 
-  // Variables para template
+  // Estado para media URL (WhatsApp)
+  const [mediaUrl, setMediaUrl] = useState<string>('');
+  const [mediaType, setMediaType] = useState<string>('image');
+
+  // CORREGIDO: Variables con valores por defecto
   const [variables, setVariables] = useState<Variables>({
     nombre: 'Juan Pérez',
     email: 'juan@ejemplo.com',
@@ -111,7 +118,9 @@ const NotificationsSend: React.FC = () => {
     hora: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
     monto: '$1,250.00',
     fechaLimite: new Date(new Date().setDate(new Date().getDate() + 7)).toLocaleDateString('es-ES'),
-    numeroFactura: 'INV-' + new Date().getFullYear() + '-' + Math.floor(Math.random() * 1000).toString().padStart(3, '0')
+    numeroFactura: 'INV-' + new Date().getFullYear() + '-' + Math.floor(Math.random() * 1000).toString().padStart(3, '0'),
+    mediaUrl: '',
+    mediaType: 'image'
   });
 
   // Cargar contactos desde API
@@ -190,12 +199,12 @@ const NotificationsSend: React.FC = () => {
       
       setTemplates(templatesArray);
       
-      // Filtrar solo EMAIL y SMS para este componente
+      // Filtrar solo EMAIL, SMS y WHATSAPP
       const availableTemplates = templatesArray.filter((t: Template) => 
-        t.channel === 'EMAIL' || t.channel === 'SMS'
+        t.channel === 'EMAIL' || t.channel === 'SMS' || t.channel === 'WHATSAPP'
       );
       
-      console.log('Templates disponibles (EMAIL/SMS):', availableTemplates.length);
+      console.log('Templates disponibles:', availableTemplates.length);
       if (availableTemplates.length > 0) {
         // Intentar seleccionar primero un template de EMAIL
         const emailTemplate = availableTemplates.find((t: { channel: string; }) => t.channel === 'EMAIL');
@@ -228,6 +237,13 @@ const NotificationsSend: React.FC = () => {
           channel: 'SMS',
           content: 'Hola {{nombre}}, tu cita es el {{fecha}} a las {{hora}}. ¡No faltes! Factura: {{numeroFactura}}, Monto: {{monto}}. {{empresa}}',
           company_id: companyId
+        },
+        {
+          id: '3',
+          name: 'Template de WhatsApp',
+          channel: 'WHATSAPP',
+          content: 'Hola {{nombre}} 👋\n\nTu factura {{numeroFactura}} por {{monto}} está próxima a vencer el {{fechaLimite}}.\n\nPuedes realizar el pago a través de nuestro portal.\n\nGracias,\n{{empresa}}',
+          company_id: companyId
         }
       ];
       
@@ -257,13 +273,12 @@ const NotificationsSend: React.FC = () => {
         await loadContacts();
         await loadGroups();
         
-        // Configurar fecha por defecto (hoy, no mañana)
+        // Configurar fecha por defecto (hoy)
         const today = new Date();
-        // Normalizamos la fecha a medianoche para que no bloquee el día actual
         const normalizedToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
         setScheduleDate(normalizedToday.toISOString().split('T')[0]);
         
-        // Configurar hora por defecto (1 hora en el futuro para evitar problemas de hora pasada)
+        // Configurar hora por defecto (1 hora en el futuro)
         const nextHour = new Date(today.getTime() + 60 * 60 * 1000);
         setScheduleTime(nextHour.toISOString().split('T')[1].substring(0, 5));
         
@@ -293,19 +308,21 @@ const NotificationsSend: React.FC = () => {
       return;
     }
 
-    const promptMsg = selectedTemplate.channel === 'SMS' 
+    const promptMsg = selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP'
       ? 'Ingresa número (Ej: +59170797542):' 
       : 'Ingresa email:';
     
     const input = prompt(promptMsg);
     if (!input) return;
 
-    if (selectedTemplate.channel === 'SMS') {
+    if (selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP') {
+      // Validar número de teléfono
       if (!/^\+?\d{10,15}$/.test(input.replace(/\D/g, ''))) {
         showMessage('Número inválido', 'error');
         return;
       }
     } else {
+      // Validar email
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input)) {
         showMessage('Email inválido', 'error');
         return;
@@ -327,9 +344,12 @@ const NotificationsSend: React.FC = () => {
   const toggleIndividualContact = (contact: Contact): void => {
     if (!selectedTemplate) return;
 
-    const value = selectedTemplate.channel === 'SMS' ? contact.phone : contact.email;
+    const value = selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP' 
+      ? contact.phone 
+      : contact.email;
+      
     if (!value) {
-      showMessage(`${contact.name} no tiene ${selectedTemplate.channel === 'SMS' ? 'teléfono' : 'email'}`, 'error');
+      showMessage(`${contact.name} no tiene ${selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP' ? 'teléfono' : 'email'}`, 'error');
       return;
     }
 
@@ -359,12 +379,13 @@ const NotificationsSend: React.FC = () => {
     return total;
   };
 
-  // Reemplazar variables en el contenido
+  // CORREGIDO: Reemplazar variables en el contenido - maneja valores undefined
   const replaceVariables = (content: string, vars: Variables): string => {
     let result = content;
     Object.keys(vars).forEach(key => {
       const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
-      result = result.replace(regex, vars[key]);
+      const value = vars[key] || '';
+      result = result.replace(regex, value);
     });
     return result;
   };
@@ -380,7 +401,6 @@ const NotificationsSend: React.FC = () => {
   // Función para obtener fecha mínima (hoy a medianoche)
   const getMinDate = (): string => {
     const today = new Date();
-    // Normalizar a medianoche para que no bloquee el día actual
     today.setHours(0, 0, 0, 0);
     return today.toISOString().split('T')[0];
   };
@@ -395,39 +415,35 @@ const NotificationsSend: React.FC = () => {
     return scheduledDateTime > now;
   };
 
-  // Función para determinar si una respuesta es exitosa (FIX CRÍTICO)
+  // Función para determinar si una respuesta es exitosa
   const isSuccessResponse = (responseData: any): boolean => {
-    // Verificar si hay un campo 'success' explícito
     if (typeof responseData.success === 'boolean') {
       return responseData.success;
     }
     
-    // Verificar si hay un campo 'error'
     if (responseData.error) {
       return false;
     }
     
-    // Verificar si la respuesta tiene datos válidos
     if (responseData.data) {
       return true;
     }
     
-    // Verificar si el mensaje indica éxito
     if (responseData.message) {
       const lowerMessage = responseData.message.toLowerCase();
       if (lowerMessage.includes('enviado') || 
           lowerMessage.includes('correctamente') || 
           lowerMessage.includes('éxito') ||
-          lowerMessage.includes('success')) {
+          lowerMessage.includes('success') ||
+          lowerMessage.includes('encolado')) {
         return true;
       }
     }
     
-    // Por defecto, asumir éxito si no hay indicadores de error
     return !responseData.error && responseData.message;
   };
 
-  // Función para enviar notificaciones - CORREGIDA
+  // CORREGIDO: Función para enviar notificaciones - AHORA CON WHATSAPP
   const sendNotifications = async (): Promise<void> => {
     if (!selectedTemplate) {
       showMessage('Selecciona un template', 'error');
@@ -466,96 +482,64 @@ const NotificationsSend: React.FC = () => {
     setResult(null);
 
     try {
-      // Preparar destinatarios únicos para evitar duplicados
+      // Preparar destinatarios únicos
       const uniqueRecipients = [...new Set(selectedContacts)];
       const totalRecipients = selectedRecipientType === 'group' 
         ? getContactsFromSelectedGroups() 
         : uniqueRecipients.length;
 
-      console.log(`Iniciando envío a ${totalRecipients} destinatarios únicos`);
+      console.log(`Iniciando envío a ${totalRecipients} destinatarios únicos (${selectedTemplate.channel})`);
 
+      // ENDPOINTS POR CANAL
+      let endpoint = '';
       if (selectedTemplate.channel === 'EMAIL') {
-        // Reemplazar variables en el contenido para el payload
-        const finalContent = replaceVariables(selectedTemplate.content, variables);
+        endpoint = '/email/send-notification';
+      } else if (selectedTemplate.channel === 'SMS') {
+        endpoint = '/sms/send-direct';
+      } else if (selectedTemplate.channel === 'WHATSAPP') {
+        // WhatsApp - decidir qué endpoint usar según el caso
+        if (mediaUrl) {
+          endpoint = '/whatsapp/send-media';
+        } else {
+          endpoint = '/whatsapp/send';
+        }
+      }
+
+      // Reemplazar variables en el contenido
+      const finalContent = replaceVariables(selectedTemplate.content, variables);
+
+      // CORREGIDO: Actualizar variables con mediaUrl y mediaType
+      const updatedVariables = {
+        ...variables,
+        mediaUrl: mediaUrl || '',
+        mediaType: mediaType || 'image'
+      };
+
+      // PROMESAS DE ENVÍO
+      const promises = uniqueRecipients.map(async (recipient): Promise<NotificationResult> => {
+        let payload: any = {};
         
-        // Para email, enviar a cada destinatario individualmente
-        const promises = uniqueRecipients.map(async (recipient): Promise<NotificationResult> => {
-          const emailPayload = {
+        // CONSTRUIR PAYLOAD SEGÚN CANAL
+        if (selectedTemplate.channel === 'EMAIL') {
+          payload = {
             to: recipient,
-            subject: `${selectedTemplate.name} - ${variables.empresa}`,
+            subject: `${selectedTemplate.name} - ${variables.empresa || 'Mi Empresa'}`,
             html: finalContent,
             text: finalContent.replace(/<[^>]*>/g, ''),
             templateId: selectedTemplate.id,
             companyId: companyId,
-            companyName: variables.empresa,
-            variables: variables,
+            companyName: variables.empresa || 'Mi Empresa',
+            variables: updatedVariables,
             schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null
           };
-          
-          console.log(`Enviando EMAIL a: ${recipient}`);
-          
-          try {
-            const response = await api.post('/email/send-notification', emailPayload);
-            console.log(`Respuesta para ${recipient}:`, response.data);
-            
-            // USAR LA NUEVA FUNCIÓN PARA DETERMINAR ÉXITO
-            const success = isSuccessResponse(response.data);
-            
-            return {
-              recipient,
-              success,
-              data: response.data.data || response.data,
-              scheduled: !!emailPayload.schedule,
-              channel: 'EMAIL'
-            };
-          } catch (error: any) {
-            console.error(`Error enviando a ${recipient}:`, error);
-            return {
-              recipient,
-              success: false,
-              error: error.response?.data?.message || error.message || 'Error desconocido',
-              scheduled: !!emailPayload.schedule,
-              channel: 'EMAIL'
-            };
-          }
-        });
-        
-        const results = await Promise.all(promises);
-        const successCount = results.filter(r => r.success).length;
-        
-        console.log(`Resultados: ${successCount} exitosos de ${results.length} totales`);
-        
-        setResult({
-          success: successCount > 0,
-          message: scheduleType === 'now'
-            ? `Enviados ${successCount} de ${uniqueRecipients.length} EMAIL(s)`
-            : `Programados ${uniqueRecipients.length} EMAIL(s)`,
-          results: results,
-          total: uniqueRecipients.length,
-          successful: successCount,
-          scheduled: scheduleType === 'later',
-          channel: 'EMAIL'
-        });
-        
-        if (scheduleType === 'now') {
-          if (successCount > 0) {
-            showMessage(`${successCount} EMAIL(s) enviado(s) exitosamente`, 'success');
-          } else {
-            showMessage(`No se pudo enviar ningún EMAIL`, 'error');
-          }
-        } else {
-          showMessage(`${uniqueRecipients.length} EMAIL(s) programado(s) exitosamente`, 'success');
-        }
-        
-      } else if (selectedTemplate.channel === 'SMS') {
-        // Para SMS, usar el endpoint /sms/send-direct
-        const smsPromises = uniqueRecipients.map(async (recipient): Promise<NotificationResult> => {
-          const smsPayload = {
+        } 
+        else if (selectedTemplate.channel === 'SMS') {
+          payload = {
             to: recipient,
-            text: replaceVariables(selectedTemplate.content, variables),
+            text: finalContent,
             templateId: selectedTemplate.id,
             companyId: companyId,
-            variables: variables,
+            variables: updatedVariables,
             provider: 'vonage',
             config: {
               apiKey: '84a24d93',
@@ -564,59 +548,89 @@ const NotificationsSend: React.FC = () => {
             },
             schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null
           };
-          
-          console.log(`Enviando SMS a: ${recipient}`);
-          
-          try {
-            const response = await api.post('/sms/send-direct', smsPayload);
-            console.log(`Respuesta para ${recipient}:`, response.data);
-            
-            // USAR LA NUEVA FUNCIÓN PARA DETERMINAR ÉXITO
-            const success = isSuccessResponse(response.data);
-            
-            return {
-              recipient,
-              success,
-              data: response.data.data || response.data,
-              scheduled: !!smsPayload.schedule,
-              channel: 'SMS'
-            };
-          } catch (error: any) {
-            console.error(`Error enviando SMS a ${recipient}:`, error);
-            return {
-              recipient,
-              success: false,
-              error: error.response?.data?.message || error.message || 'Error desconocido',
-              scheduled: !!smsPayload.schedule,
-              channel: 'SMS'
-            };
-          }
-        });
-        
-        const results = await Promise.all(smsPromises);
-        const successCount = results.filter(r => r.success).length;
-        
-        setResult({
-          success: successCount > 0,
-          message: scheduleType === 'now'
-            ? `Enviados ${successCount} de ${uniqueRecipients.length} SMS`
-            : `Programados ${uniqueRecipients.length} SMS`,
-          results: results,
-          total: uniqueRecipients.length,
-          successful: successCount,
-          scheduled: scheduleType === 'later',
-          channel: 'SMS'
-        });
-        
-        if (scheduleType === 'now') {
-          if (successCount > 0) {
-            showMessage(`${successCount} SMS enviado(s) exitosamente`, 'success');
-          } else {
-            showMessage(`No se pudo enviar ningún SMS`, 'error');
-          }
-        } else {
-          showMessage(`${uniqueRecipients.length} SMS programado(s) exitosamente`, 'success');
         }
+        else if (selectedTemplate.channel === 'WHATSAPP') {
+          if (mediaUrl) {
+            // WhatsApp con media
+            payload = {
+              to: recipient,
+              body: finalContent,
+              mediaUrl: mediaUrl,
+              mediaType: mediaType,
+              companyId: companyId,
+              companyName: variables.empresa || 'Mi Empresa',
+              templateId: selectedTemplate.id,
+              schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null,
+              variables: updatedVariables
+            };
+          } else {
+            // WhatsApp texto simple
+            payload = {
+              to: recipient,
+              body: finalContent,
+              companyId: companyId,
+              companyName: variables.empresa || 'Mi Empresa',
+              templateId: selectedTemplate.id,
+              schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null,
+              variables: updatedVariables
+            };
+          }
+        }
+
+        console.log(`Enviando ${selectedTemplate.channel} a: ${recipient}`);
+        
+        try {
+          const response = await api.post(endpoint, payload);
+          console.log(`Respuesta para ${recipient}:`, response.data);
+          
+          const success = isSuccessResponse(response.data);
+          
+          return {
+            recipient,
+            success,
+            data: response.data.data || response.data,
+            scheduled: !!payload.schedule,
+            channel: selectedTemplate.channel
+          };
+        } catch (error: any) {
+          console.error(`Error enviando a ${recipient}:`, error);
+          return {
+            recipient,
+            success: false,
+            error: error.response?.data?.message || error.message || 'Error desconocido',
+            scheduled: !!payload.schedule,
+            channel: selectedTemplate.channel
+          };
+        }
+      });
+      
+      const results = await Promise.all(promises);
+      const successCount = results.filter(r => r.success).length;
+      
+      // NOMBRE DEL CANAL PARA MOSTRAR
+      const channelName = selectedTemplate.channel === 'EMAIL' ? 'EMAIL' : 
+                         selectedTemplate.channel === 'SMS' ? 'SMS' : 'WHATSAPP';
+      
+      setResult({
+        success: successCount > 0,
+        message: scheduleType === 'now'
+          ? `Enviados ${successCount} de ${uniqueRecipients.length} ${channelName}`
+          : `Programados ${uniqueRecipients.length} ${channelName}`,
+        results: results,
+        total: uniqueRecipients.length,
+        successful: successCount,
+        scheduled: scheduleType === 'later',
+        channel: selectedTemplate.channel
+      });
+      
+      if (scheduleType === 'now') {
+        if (successCount > 0) {
+          showMessage(`${successCount} ${channelName} enviado(s) exitosamente`, 'success');
+        } else {
+          showMessage(`No se pudo enviar ningún ${channelName}`, 'error');
+        }
+      } else {
+        showMessage(`${uniqueRecipients.length} ${channelName} programado(s) exitosamente`, 'success');
       }
 
     } catch (error: any) {
@@ -648,14 +662,15 @@ const NotificationsSend: React.FC = () => {
     return false;
   };
 
-  // Filtrar templates para mostrar solo EMAIL y SMS
+  // Filtrar templates para mostrar solo los del canal seleccionado
   const getFilteredTemplates = (): Template[] => {
-    return templates.filter(t => t.channel === 'EMAIL' || t.channel === 'SMS');
+    return templates.filter(t => 
+      t.channel === 'EMAIL' || t.channel === 'SMS' || t.channel === 'WHATSAPP'
+    );
   };
 
-  // Función para renderizar HTML seguro
+  // CORREGIDO: Función para renderizar HTML seguro - maneja valores undefined
   const renderTemplateContent = (content: string): { __html: string } => {
-    // Reemplazar variables primero
     const contentWithVars = replaceVariables(content, variables);
     return { __html: contentWithVars };
   };
@@ -667,10 +682,8 @@ const NotificationsSend: React.FC = () => {
     const cleaned = phone.replace(/\D/g, '');
     
     if (cleaned.startsWith('591')) {
-      // Formato Bolivia: +591 70797542
       return `+${cleaned.substring(0, 3)} ${cleaned.substring(3)}`;
     } else if (cleaned.length === 10) {
-      // Formato USA: (123) 456-7890
       return `(${cleaned.substring(0, 3)}) ${cleaned.substring(3, 6)}-${cleaned.substring(6)}`;
     }
     
@@ -680,11 +693,29 @@ const NotificationsSend: React.FC = () => {
   // Variables del template actual
   const templateVariables = selectedTemplate ? extractVariables(selectedTemplate.content) : [];
 
-  // Manejar cambio de variable
+  // CORREGIDO: Manejar cambio de variable - con valores por defecto
   const handleVariableChange = (variable: string, value: string): void => {
     setVariables(prev => ({
       ...prev,
-      [variable]: value
+      [variable]: value || ''
+    }));
+  };
+
+  // CORREGIDO: Manejar cambio de media URL
+  const handleMediaUrlChange = (value: string): void => {
+    setMediaUrl(value);
+    setVariables(prev => ({
+      ...prev,
+      mediaUrl: value || ''
+    }));
+  };
+
+  // CORREGIDO: Manejar cambio de media type
+  const handleMediaTypeChange = (value: string): void => {
+    setMediaType(value);
+    setVariables(prev => ({
+      ...prev,
+      mediaType: value || 'image'
     }));
   };
 
@@ -698,6 +729,26 @@ const NotificationsSend: React.FC = () => {
       month: 'long',
       day: 'numeric'
     });
+  };
+
+  // Obtener icono del canal
+  const getChannelIcon = (channel: string) => {
+    switch (channel) {
+      case 'EMAIL': return <Mail className="w-5 h-5 text-blue-600" />;
+      case 'SMS': return <Phone className="w-5 h-5 text-green-600" />;
+      case 'WHATSAPP': return <MessageCircle className="w-5 h-5 text-emerald-600" />;
+      default: return <Mail className="w-5 h-5 text-gray-600" />;
+    }
+  };
+
+  // Obtener color del canal
+  const getChannelColor = (channel: string) => {
+    switch (channel) {
+      case 'EMAIL': return 'bg-blue-100 text-blue-800';
+      case 'SMS': return 'bg-green-100 text-green-800';
+      case 'WHATSAPP': return 'bg-emerald-100 text-emerald-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
   };
 
   if (loading) {
@@ -771,13 +822,17 @@ const NotificationsSend: React.FC = () => {
                 <div className="border rounded-lg p-4 bg-blue-50">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100' : 'bg-green-100'}`}>
-                        {selectedTemplate.channel === 'EMAIL' ? <Mail className="w-5 h-5 text-blue-600" /> : <Phone className="w-5 h-5 text-green-600" />}
+                      <div className={`p-2 rounded-lg ${
+                        selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100' :
+                        selectedTemplate.channel === 'SMS' ? 'bg-green-100' :
+                        'bg-emerald-100'
+                      }`}>
+                        {getChannelIcon(selectedTemplate.channel)}
                       </div>
                       <div>
                         <h3 className="font-bold">{selectedTemplate.name}</h3>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className={`px-2 py-1 rounded-full text-xs ${selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                          <span className={`px-2 py-1 rounded-full text-xs ${getChannelColor(selectedTemplate.channel)}`}>
                             {selectedTemplate.channel}
                           </span>
                         </div>
@@ -802,6 +857,61 @@ const NotificationsSend: React.FC = () => {
                 </button>
               )}
             </div>
+
+            {/* Sección de Media para WhatsApp */}
+            {selectedTemplate?.channel === 'WHATSAPP' && (
+              <div className="bg-white rounded-xl border p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-emerald-100 rounded-lg">
+                    <MessageCircle className="w-5 h-5 text-emerald-600" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-gray-900">Media Adjunta (Opcional)</h2>
+                    <p className="text-gray-600 text-sm">Agrega imágenes o documentos a tu mensaje</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">URL del Media</label>
+                    <input
+                      type="url"
+                      value={mediaUrl}
+                      onChange={(e) => handleMediaUrlChange(e.target.value)}
+                      className="w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                      placeholder="https://ejemplo.com/imagen.jpg"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      URL pública de la imagen, PDF o documento
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Tipo de Media</label>
+                    <select
+                      value={mediaType}
+                      onChange={(e) => handleMediaTypeChange(e.target.value)}
+                      className="w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    >
+                      <option value="image">Imagen</option>
+                      <option value="document">Documento</option>
+                      <option value="video">Video</option>
+                      <option value="audio">Audio</option>
+                    </select>
+                  </div>
+
+                  {mediaUrl && (
+                    <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+                      <div className="flex items-center gap-2 text-emerald-700">
+                        <CheckCircle className="w-4 h-4" />
+                        <span className="font-medium">Media configurado:</span>
+                        <span className="text-sm truncate">{mediaUrl}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Variables del Template */}
             {templateVariables.length > 0 && (
@@ -829,6 +939,8 @@ const NotificationsSend: React.FC = () => {
                          variable === 'monto' ? '💰 Monto' :
                          variable === 'fechaLimite' ? '⏳ Fecha Límite' :
                          variable === 'numeroFactura' ? '🧾 N° Factura' :
+                         variable === 'mediaUrl' ? '🖼️ URL Media' :
+                         variable === 'mediaType' ? '📁 Tipo Media' :
                          variable.charAt(0).toUpperCase() + variable.slice(1)}
                       </label>
                       <input
@@ -898,19 +1010,29 @@ const NotificationsSend: React.FC = () => {
                     <div className="space-y-2">
                       {selectedContacts.slice(0, 5).map((value, index) => {
                         const contact = contacts.find(c => 
-                          selectedTemplate?.channel === 'SMS' ? c.phone === value : c.email === value
+                          selectedTemplate?.channel === 'SMS' || selectedTemplate?.channel === 'WHATSAPP' 
+                            ? c.phone === value 
+                            : c.email === value
                         );
                         
                         return (
                           <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
                             <div className="flex items-center gap-3">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedTemplate?.channel === 'SMS' ? 'bg-green-100' : 'bg-blue-100'}`}>
-                                {selectedTemplate?.channel === 'SMS' ? <Phone className="w-4 h-4 text-green-600" /> : <Mail className="w-4 h-4 text-blue-600" />}
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                selectedTemplate?.channel === 'EMAIL' ? 'bg-blue-100' :
+                                selectedTemplate?.channel === 'SMS' ? 'bg-green-100' :
+                                'bg-emerald-100'
+                              }`}>
+                                {selectedTemplate?.channel === 'EMAIL' && <Mail className="w-4 h-4 text-blue-600" />}
+                                {selectedTemplate?.channel === 'SMS' && <Phone className="w-4 h-4 text-green-600" />}
+                                {selectedTemplate?.channel === 'WHATSAPP' && <MessageCircle className="w-4 h-4 text-emerald-600" />}
                               </div>
                               <div>
                                 <div className="font-medium">{contact?.name || value}</div>
                                 <div className="text-sm text-gray-500">
-                                  {selectedTemplate?.channel === 'SMS' ? formatPhoneForDisplay(value) : value}
+                                  {selectedTemplate?.channel === 'SMS' || selectedTemplate?.channel === 'WHATSAPP' 
+                                    ? formatPhoneForDisplay(value) 
+                                    : value}
                                 </div>
                               </div>
                             </div>
@@ -990,7 +1112,7 @@ const NotificationsSend: React.FC = () => {
                   <div className="flex justify-between mb-3">
                     <span className="text-sm font-medium">Destinatarios manuales</span>
                     <button onClick={addManualRecipient} className="text-sm text-blue-600 hover:text-blue-800">
-                      Agregar {selectedTemplate?.channel === 'SMS' ? 'número' : 'email'}
+                      Agregar {selectedTemplate?.channel === 'SMS' || selectedTemplate?.channel === 'WHATSAPP' ? 'número' : 'email'}
                     </button>
                   </div>
                   {selectedContacts.length > 0 ? (
@@ -998,11 +1120,19 @@ const NotificationsSend: React.FC = () => {
                       {selectedContacts.map((value, index) => (
                         <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
                           <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${selectedTemplate?.channel === 'SMS' ? 'bg-green-100' : 'bg-blue-100'}`}>
-                              {selectedTemplate?.channel === 'SMS' ? <Phone className="w-4 h-4 text-green-600" /> : <Mail className="w-4 h-4 text-blue-600" />}
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                              selectedTemplate?.channel === 'EMAIL' ? 'bg-blue-100' :
+                              selectedTemplate?.channel === 'SMS' ? 'bg-green-100' :
+                              'bg-emerald-100'
+                            }`}>
+                              {selectedTemplate?.channel === 'EMAIL' && <Mail className="w-4 h-4 text-blue-600" />}
+                              {selectedTemplate?.channel === 'SMS' && <Phone className="w-4 h-4 text-green-600" />}
+                              {selectedTemplate?.channel === 'WHATSAPP' && <MessageCircle className="w-4 h-4 text-emerald-600" />}
                             </div>
                             <div className="font-medium">
-                              {selectedTemplate?.channel === 'SMS' ? formatPhoneForDisplay(value) : value}
+                              {selectedTemplate?.channel === 'SMS' || selectedTemplate?.channel === 'WHATSAPP' 
+                                ? formatPhoneForDisplay(value) 
+                                : value}
                             </div>
                           </div>
                           <button onClick={() => removeRecipient(value)} className="text-red-600 hover:text-red-800">
@@ -1079,7 +1209,6 @@ const NotificationsSend: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Validación de fecha/hora */}
                   {scheduleDate && scheduleTime && (
                     <div className={`p-3 rounded-lg border ${
                       isValidSchedule(scheduleDate, scheduleTime) 
@@ -1108,11 +1237,6 @@ const NotificationsSend: React.FC = () => {
                           </>
                         )}
                       </div>
-                      {!isValidSchedule(scheduleDate, scheduleTime) && (
-                        <p className="text-red-600 text-sm mt-2">
-                          La fecha/hora programada ya pasó. Selecciona una fecha/hora futura.
-                        </p>
-                      )}
                     </div>
                   )}
                 </>
@@ -1146,7 +1270,7 @@ const NotificationsSend: React.FC = () => {
                       <div className="text-sm text-gray-600">Template:</div>
                       <div className="font-bold">{selectedTemplate.name}</div>
                     </div>
-                    <div className={`px-3 py-1.5 rounded-full text-sm ${selectedTemplate.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                    <div className={`px-3 py-1.5 rounded-full text-sm ${getChannelColor(selectedTemplate.channel)}`}>
                       {selectedTemplate.channel}
                     </div>
                   </div>
@@ -1155,19 +1279,30 @@ const NotificationsSend: React.FC = () => {
                     <div className="text-sm font-medium mb-2">Contenido:</div>
                     <div className="bg-gray-50 rounded-lg p-4 border min-h-[200px] overflow-auto">
                       {selectedTemplate.channel === 'EMAIL' ? (
-                        // Para EMAIL, renderizar HTML con variables reemplazadas
                         <div 
                           className="preview-content"
                           dangerouslySetInnerHTML={renderTemplateContent(selectedTemplate.content)}
                         />
                       ) : (
-                        // Para SMS, mostrar texto plano con variables reemplazadas
                         <div className="whitespace-pre-wrap text-gray-800">
                           {replaceVariables(selectedTemplate.content, variables)}
                         </div>
                       )}
                     </div>
                   </div>
+
+                  {selectedTemplate.channel === 'WHATSAPP' && mediaUrl && (
+                    <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+                      <div className="flex items-center gap-2 text-emerald-700">
+                        <MessageCircle className="w-4 h-4" />
+                        <span className="font-medium">Media adjunto:</span>
+                        <span className="text-sm truncate">{mediaUrl}</span>
+                      </div>
+                      <p className="text-xs text-emerald-600 mt-1">
+                        Tipo: {mediaType}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="p-4 bg-blue-50 rounded-lg border">
                     <h4 className="font-medium mb-3">Resumen</h4>
@@ -1198,6 +1333,12 @@ const NotificationsSend: React.FC = () => {
                         <span>Variables:</span>
                         <span className="font-medium">{templateVariables.length}</span>
                       </div>
+                      {selectedTemplate.channel === 'WHATSAPP' && (
+                        <div className="flex justify-between">
+                          <span>Con Media:</span>
+                          <span className="font-medium">{mediaUrl ? 'Sí' : 'No'}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1232,7 +1373,9 @@ const NotificationsSend: React.FC = () => {
                               <div key={i} className="flex items-center">
                                 <span className="text-green-600 mr-2">✓</span>
                                 <span className="truncate">
-                                  {r.channel === 'SMS' ? formatPhoneForDisplay(r.recipient) : r.recipient}
+                                  {r.channel === 'SMS' || r.channel === 'WHATSAPP' 
+                                    ? formatPhoneForDisplay(r.recipient) 
+                                    : r.recipient}
                                 </span>
                               </div>
                             ))}

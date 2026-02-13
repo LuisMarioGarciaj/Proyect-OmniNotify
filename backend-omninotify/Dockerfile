@@ -1,4 +1,5 @@
-FROM node:18-alpine
+# ---------- BACKEND DOCKERFILE ----------
+FROM node:20-bullseye
 
 WORKDIR /app
 
@@ -8,7 +9,6 @@ RUN npm install
 
 COPY . .
 
-# Puerto típico NestJS
-EXPOSE 3001
+EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["npm", "run", "start:dev"]

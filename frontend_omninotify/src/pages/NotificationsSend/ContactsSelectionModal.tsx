@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, X, User, Mail, Phone, Check } from 'lucide-react';
+import { Search, X, User, Mail, Phone, MessageCircle, Check } from 'lucide-react';
 
 // Define los tipos localmente
 interface Contact {
@@ -44,12 +44,44 @@ const ContactsSelectionModal: React.FC<Props> = ({
 
   const getContactValue = (contact: Contact) => {
     if (!selectedTemplate) return contact.email;
-    return selectedTemplate.channel === 'SMS' ? contact.phone : contact.email;
+    return selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP' 
+      ? contact.phone 
+      : contact.email;
   };
 
   const isSelected = (contact: Contact) => {
     const value = getContactValue(contact);
     return selectedContacts.includes(value || '');
+  };
+
+  const getChannelIcon = () => {
+    if (!selectedTemplate) return <Mail className="w-3 h-3" />;
+    switch (selectedTemplate.channel) {
+      case 'EMAIL': return <Mail className="w-3 h-3" />;
+      case 'SMS': return <Phone className="w-3 h-3" />;
+      case 'WHATSAPP': return <MessageCircle className="w-3 h-3" />;
+      default: return <Mail className="w-3 h-3" />;
+    }
+  };
+
+  const getChannelColor = () => {
+    if (!selectedTemplate) return 'bg-blue-100';
+    switch (selectedTemplate.channel) {
+      case 'EMAIL': return 'bg-blue-100';
+      case 'SMS': return 'bg-green-100';
+      case 'WHATSAPP': return 'bg-emerald-100';
+      default: return 'bg-blue-100';
+    }
+  };
+
+  const getIconColor = () => {
+    if (!selectedTemplate) return 'text-blue-600';
+    switch (selectedTemplate.channel) {
+      case 'EMAIL': return 'text-blue-600';
+      case 'SMS': return 'text-green-600';
+      case 'WHATSAPP': return 'text-emerald-600';
+      default: return 'text-blue-600';
+    }
   };
 
   return (
@@ -82,7 +114,7 @@ const ContactsSelectionModal: React.FC<Props> = ({
               <div className="text-sm">
                 <span className="font-medium">Template:</span> {selectedTemplate.channel}
                 <span className="ml-4">
-                  {selectedTemplate.channel === 'SMS' 
+                  {selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP'
                     ? 'Mostrando contactos con teléfono' 
                     : 'Mostrando contactos con email'}
                 </span>
@@ -103,7 +135,7 @@ const ContactsSelectionModal: React.FC<Props> = ({
                 const selected = isSelected(contact);
                 const value = getContactValue(contact);
                 const isValid = selectedTemplate 
-                  ? (selectedTemplate.channel === 'SMS' ? contact.phone : contact.email)
+                  ? (selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP' ? contact.phone : contact.email)
                   : true;
 
                 return (
@@ -144,7 +176,9 @@ const ContactsSelectionModal: React.FC<Props> = ({
                     <div className="flex items-center gap-3">
                       {!isValid && (
                         <span className="text-xs text-gray-500">
-                          {selectedTemplate?.channel === 'SMS' ? 'Sin teléfono' : 'Sin email'}
+                          {selectedTemplate?.channel === 'SMS' || selectedTemplate?.channel === 'WHATSAPP' 
+                            ? 'Sin teléfono' 
+                            : 'Sin email'}
                         </span>
                       )}
                       {selected && (
@@ -165,7 +199,9 @@ const ContactsSelectionModal: React.FC<Props> = ({
             <div>
               <div className="font-bold">{selectedContacts.length} seleccionados</div>
               <div className="text-sm text-gray-600">
-                {selectedTemplate?.channel === 'SMS' ? 'Envío por SMS' : 'Envío por Email'}
+                {selectedTemplate?.channel === 'SMS' ? 'Envío por SMS' : 
+                 selectedTemplate?.channel === 'WHATSAPP' ? 'Envío por WhatsApp' : 
+                 'Envío por Email'}
               </div>
             </div>
             <button

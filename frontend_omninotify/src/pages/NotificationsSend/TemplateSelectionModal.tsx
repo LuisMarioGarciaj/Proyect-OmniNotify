@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, X, Mail, MessageSquare, Check } from 'lucide-react';
+import { Search, X, Mail, MessageSquare, MessageCircle, Check } from 'lucide-react';
 
 // Define el tipo localmente
 interface Template {
@@ -17,13 +17,36 @@ interface Props {
   onClose: () => void;
 }
 
-const TemplateSelectionModal: React.FC<Props> = ({ templates, selectedTemplate, onSelect, onClose }) => {
+const TemplateSelectionModal: React.FC<Props> = ({ 
+  templates, 
+  selectedTemplate, 
+  onSelect, 
+  onClose 
+}) => {
   const [search, setSearch] = useState('');
 
   const filtered = templates.filter(t =>
     t.name.toLowerCase().includes(search.toLowerCase()) ||
     t.channel.toLowerCase().includes(search.toLowerCase())
   );
+
+  const getChannelIcon = (channel: string) => {
+    switch (channel) {
+      case 'EMAIL': return <Mail className="w-6 h-6 text-blue-600" />;
+      case 'SMS': return <MessageSquare className="w-6 h-6 text-green-600" />;
+      case 'WHATSAPP': return <MessageCircle className="w-6 h-6 text-emerald-600" />;
+      default: return <Mail className="w-6 h-6 text-gray-600" />;
+    }
+  };
+
+  const getChannelColor = (channel: string) => {
+    switch (channel) {
+      case 'EMAIL': return 'bg-blue-100';
+      case 'SMS': return 'bg-green-100';
+      case 'WHATSAPP': return 'bg-emerald-100';
+      default: return 'bg-gray-100';
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -43,7 +66,7 @@ const TemplateSelectionModal: React.FC<Props> = ({ templates, selectedTemplate, 
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input
               type="text"
-              placeholder="Buscar templates..."
+              placeholder="Buscar templates por nombre o canal..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-3 border rounded-lg"
@@ -61,7 +84,8 @@ const TemplateSelectionModal: React.FC<Props> = ({ templates, selectedTemplate, 
             <div className="grid md:grid-cols-2 gap-4">
               {filtered.map(template => {
                 const isSelected = selectedTemplate?.id === template.id;
-                const Icon = template.channel === 'EMAIL' ? Mail : MessageSquare;
+                const Icon = getChannelIcon(template.channel);
+                const bgColor = getChannelColor(template.channel);
 
                 return (
                   <button
@@ -75,11 +99,11 @@ const TemplateSelectionModal: React.FC<Props> = ({ templates, selectedTemplate, 
                     }`}
                   >
                     <div className="flex items-start justify-between mb-4">
-                      <div className={`p-3 rounded-lg ${template.channel === 'EMAIL' ? 'bg-blue-100' : 'bg-green-100'}`}>
-                        <Icon className={`w-6 h-6 ${template.channel === 'EMAIL' ? 'text-blue-600' : 'text-green-600'}`} />
+                      <div className={`p-3 rounded-lg ${bgColor}`}>
+                        {Icon}
                       </div>
                       {isSelected && (
-                        <div className={`p-1 ${template.channel === 'EMAIL' ? 'bg-blue-500' : 'bg-green-500'} rounded-full`}>
+                        <div className={`p-1 bg-blue-500 rounded-full`}>
                           <Check className="w-3 h-3 text-white" />
                         </div>
                       )}
@@ -87,15 +111,29 @@ const TemplateSelectionModal: React.FC<Props> = ({ templates, selectedTemplate, 
 
                     <h3 className="font-bold text-lg mb-2">{template.name}</h3>
                     
-                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${template.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
-                      <Icon className="w-4 h-4" />
+                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
+                      template.channel === 'EMAIL' ? 'bg-blue-100 text-blue-800' :
+                      template.channel === 'SMS' ? 'bg-green-100 text-green-800' :
+                      'bg-emerald-100 text-emerald-800'
+                    }`}>
+                      {template.channel === 'EMAIL' && <Mail className="w-4 h-4" />}
+                      {template.channel === 'SMS' && <MessageSquare className="w-4 h-4" />}
+                      {template.channel === 'WHATSAPP' && <MessageCircle className="w-4 h-4" />}
                       {template.channel}
                     </div>
 
                     <div className="mt-4 p-3 bg-gray-50 rounded border">
-                      <p className="text-sm text-gray-600 line-clamp-2">
-                        {template.content.replace(/<[^>]*>/g, '').substring(0, 100)}...
-                      </p>
+                      <div className="text-sm text-gray-600 line-clamp-2">
+                        {template.channel === 'EMAIL' ? (
+                          <div 
+                            dangerouslySetInnerHTML={{ 
+                              __html: template.content.replace(/<[^>]*>/g, ' ').substring(0, 100) + '...'
+                            }} 
+                          />
+                        ) : (
+                          template.content.substring(0, 100) + '...'
+                        )}
+                      </div>
                     </div>
                   </button>
                 );

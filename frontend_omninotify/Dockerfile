@@ -1,20 +1,31 @@
-# Imagen base (Vite 5+ requiere Node 20+)
-FROM node:20-bullseye
+# ---------- BUILD STAGE ----------
+FROM node:20-alpine AS builder
 
-# Directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Copiamos primero los package para aprovechar cache
-COPY package.json package-lock.json ./
-
-# Instalamos dependencias (linux)
+# Copiar dependencias primero (mejora cache)
+COPY package*.json ./
 RUN npm install
 
-# Copiamos todo el proyecto
+# Copiar código
 COPY . .
 
-# Puerto que usa Vite
-EXPOSE 5173
+# Build producción
+RUN npm run build
 
-# Comando DEV (IMPORTANTE --host para Docker)
-CMD ["npm", "run", "dev", "--", "--host"]
+
+# ---------- PRODUCTION STAGE ----------
+FROM nginx:alpine
+
+# Eliminar configuración default
+RUN rm -rf /etc/nginx/conf.d/default.conf
+
+# Copiar build generado
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copiar configuración personalizada de nginx
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
