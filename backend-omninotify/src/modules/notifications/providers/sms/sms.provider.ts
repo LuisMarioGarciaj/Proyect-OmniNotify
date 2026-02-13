@@ -1,6 +1,7 @@
 // src/modules/notifications/providers/sms.provider.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { Vonage } from '@vonage/server-sdk';
+import { SystemConfigService, VonageCredentials } from '../../../system/services/system-config.service';
 
 export interface SMSConfig {
   provider: 'vonage' | 'twilio';
@@ -24,11 +25,27 @@ export interface SMSContent {
 export class SMSProvider {
   private readonly logger = new Logger(SMSProvider.name);
   private vonageClient: Vonage | null = null;
+  private currentApiKey: string | null = null;
+  private currentApiSecret: string | null = null;
 
+  constructor(
+    private readonly systemConfigService: SystemConfigService, // ✅ INYECTAR
+  ) {}
   async send(config: SMSConfig, payload: SMSContent): Promise<any> {
     this.logger.debug('📱 SMSProvider.send() llamado');
     
     try {
+      // Si no se proporciona config específica, usar la global de BD
+      if (!config.apiKey || !config.apiSecret) {
+        const globalConfig = await this.systemConfigService.getVonageCredentials();
+        config = {
+          provider: 'vonage',
+          apiKey: globalConfig.apiKey,
+          apiSecret: globalConfig.apiSecret,
+          fromNumber: globalConfig.fromNumber,
+        };
+      }
+
       this.validateConfig(config);
       this.validatePayload(payload);
 
@@ -46,14 +63,18 @@ export class SMSProvider {
   }
 
   private async sendViaVonage(config: SMSConfig, payload: SMSContent) {
-    if (!this.vonageClient) {
+    if (!this.vonageClient || 
+         this.currentApiKey !== config.apiKey || 
+         this.currentApiSecret !== config.apiSecret) {
       this.vonageClient = new Vonage({
         apiKey: config.apiKey,
         apiSecret: config.apiSecret,
       });
+      this.currentApiKey = config.apiKey!;
+      this.currentApiSecret = config.apiSecret!;
     }
 
-    const fromNumber = payload.from || config.fromNumber || process.env.VONAGE_FROM_NUMBER;
+    const fromNumber = payload.from || config.fromNumber ||'OmniNotify';
     
     if (!fromNumber) {
       throw new Error('Número de origen no configurado');
@@ -160,7 +181,17 @@ export class SMSProvider {
   }
 
   // MÉTODO getBalance CORREGIDO - AQUÍ VA LA SOLUCIÓN
-  async getBalance(config: SMSConfig): Promise<number> {
+  async getBalance(config?: SMSConfig): Promise<number> {
+    try {
+      // Si no se proporciona config, usar la global de BD
+      if (!config) {
+        const globalConfig = await this.systemConfigService.getVonageCredentials();
+        config = {
+          provider: 'vonage',
+          apiKey: globalConfig.apiKey,
+          apiSecret: globalConfig.apiSecret,
+        };
+      }
     if (config.provider !== 'vonage') {
       throw new Error('Solo disponible para Vonage');
     }
@@ -174,7 +205,7 @@ export class SMSProvider {
       apiSecret: config.apiSecret,
     });
 
-    try {
+    
       // Usar 'any' temporalmente para evitar problemas de tipos
       const balance: any = await vonage.accounts.getBalance();
       
@@ -182,61 +213,39 @@ export class SMSProvider {
       this.logger.debug('DEBUG - Tipo de balance:', typeof balance);
       this.logger.debug('DEBUG - Balance completo:', JSON.stringify(balance, null, 2));
       
-      // Verificar diferentes estructuras posibles
-      if (balance && typeof balance === 'object') {
-        // Estructura: { value: number, autoReload: boolean, ... }
+       if (balance && typeof balance === 'object') {
         if (balance.value !== undefined) {
-          const value = Number(balance.value);
-          return isNaN(value) ? 0 : value;
+          return Number(balance.value) || 0;
         }
-        
-        // Estructura: { balance: number, ... }
         if (balance.balance !== undefined) {
-          const value = Number(balance.balance);
-          return isNaN(value) ? 0 : value;
+          return Number(balance.balance) || 0;
         }
-        
-        // Estructura: { amount: number, ... }
         if (balance.amount !== undefined) {
-          const value = Number(balance.amount);
-          return isNaN(value) ? 0 : value;
+          return Number(balance.amount) || 0;
         }
       }
       
-      // Si es directamente un número
       if (typeof balance === 'number') {
         return balance;
       }
       
-      // Si es una string
       if (typeof balance === 'string') {
-        const value = parseFloat(balance);
-        return isNaN(value) ? 0 : value;
+        return parseFloat(balance) || 0;
       }
       
-      this.logger.warn('Estructura de balance desconocida:', balance);
       return 0;
-      
     } catch (error: any) {
-      this.logger.error('Error obteniendo balance:', error.message);
+      this.logger.error(`Error obteniendo balance: ${error.message}`);
       throw new Error(`No se pudo obtener balance: ${error.message}`);
     }
   }
 
-  // MÉTODO testConnection actualizado para usar getBalance
-  async testConnection(config: SMSConfig): Promise<boolean> {
+ async testConnection(config?: SMSConfig): Promise<boolean> {
     try {
-      if (config.provider === 'vonage') {
-        if (!config.apiKey || !config.apiSecret) return false;
-        
-        // Usar getBalance para probar la conexión
-        await this.getBalance(config);
-        return true;
-      }
-      
-      return false;
+      await this.getBalance(config);
+      return true;
     } catch (error: any) {
-      this.logger.error('Error probando conexión SMS:', error.message);
+      this.logger.error(`Error probando conexión SMS: ${error.message}`);
       return false;
     }
   }

@@ -60,4 +60,10 @@ export class TagsController {
     const companyId = req.user.companyId;
     return this.tagsService.findByIds(body.ids, companyId);
   }
+  // src/modules/tags/tags.controller.ts - AÑADIR nuevo endpoint
+  @Get(':id/contacts')
+  getTagContacts(@Param('id') id: string, @Request() req) {
+    const companyId = req.user.companyId;
+    return this.tagsService.findTagWithContacts(id, companyId);
+  }
 }

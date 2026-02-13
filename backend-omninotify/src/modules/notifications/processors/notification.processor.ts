@@ -4,15 +4,29 @@ import { Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { SendNotificationDto, NotificationChannel } from '../dto/send-notification.dto';
+import {
+  SendNotificationDto,
+  NotificationChannel,
+} from '../dto/send-notification.dto';
 import { ScheduledNotification } from '../entities/scheduled-notification.entity';
-import { NotificationLog, NotificationLogStatus } from '../entities/notification-log.entity';
+import {
+  NotificationLog,
+  NotificationLogStatus,
+} from '../entities/notification-log.entity';
 import { EmailProvider } from '../providers/email.provider';
-import { SMSProvider, SMSConfig, SMSContent } from '../providers/sms/sms.provider';
+import {
+  SMSProvider,
+  SMSConfig,
+  SMSContent,
+} from '../providers/sms/sms.provider';
 import { NexoWhatsappProvider } from '../providers/nexo-whatsapp.provider';
 import { TemplatesService } from '../../templates/templates.service';
 import { CompanyProviderConfig } from '../../providers/entities/company-provider-config.entity';
 import { Provider } from '../../providers/entities/provider.entity';
+import {
+  SystemConfigService,
+  VonageCredentials,
+} from '../../system/services/system-config.service';
 
 @Processor('notifications')
 export class NotificationProcessor extends WorkerHost {
@@ -31,6 +45,7 @@ export class NotificationProcessor extends WorkerHost {
     private readonly smsProvider: SMSProvider,
     private readonly nexoWhatsappProvider: NexoWhatsappProvider,
     private readonly templatesService: TemplatesService,
+    private readonly systemConfigService: SystemConfigService,
   ) {
     super();
   }
@@ -52,9 +67,11 @@ export class NotificationProcessor extends WorkerHost {
 
   async process(job: Job<SendNotificationDto>): Promise<any> {
     const { data } = job;
-    
-    this.logger.log(`📨 Procesando notificación ${data.channel} para: ${data.recipient}`);
-    
+
+    this.logger.log(
+      `📨 Procesando notificación ${data.channel} para: ${data.recipient}`,
+    );
+
     try {
       // Crear log en BD
       const notificationLog = this.notificationLogsRepository.create({
@@ -64,24 +81,24 @@ export class NotificationProcessor extends WorkerHost {
         status: NotificationLogStatus.PENDING,
         jobId: job.id,
       });
-      
+
       await this.notificationLogsRepository.save(notificationLog);
 
       let result;
-      
+
       switch (data.channel) {
         case NotificationChannel.EMAIL:
           result = await this.emailProvider.sendEmail(data);
           break;
-          
+
         case NotificationChannel.SMS:
           result = await this.processSms(data, job);
           break;
-          
+
         case NotificationChannel.WHATSAPP:
           result = await this.processWhatsapp(data, job);
           break;
-          
+
         default:
           throw new Error(`Canal no soportado: ${data.channel}`);
       }
@@ -93,7 +110,7 @@ export class NotificationProcessor extends WorkerHost {
       // Si era una notificación programada, actualizar estado
       if (data.scheduledAt) {
         const scheduled = await this.scheduledNotificationRepository.findOne({
-          where: { id: job.id }
+          where: { id: job.id },
         });
         if (scheduled) {
           scheduled.status = 'SENT' as any;
@@ -109,11 +126,10 @@ export class NotificationProcessor extends WorkerHost {
         result,
         timestamp: new Date().toISOString(),
       };
-      
     } catch (error: any) {
       // Actualizar log a fallido
       const notificationLog = await this.notificationLogsRepository.findOne({
-        where: { jobId: job.id }
+        where: { jobId: job.id },
       });
       if (notificationLog) {
         notificationLog.status = NotificationLogStatus.FAILED;
@@ -130,50 +146,69 @@ export class NotificationProcessor extends WorkerHost {
    * ✅ IMPLEMENTACIÓN CORRECTA - CONSULTA BD
    * Obtiene el token de Nexo desde la tabla Company_Providers_Config
    */
-  private async processWhatsapp(data: SendNotificationDto, job: Job): Promise<any> {
+  private async processWhatsapp(
+    data: SendNotificationDto,
+    job: Job,
+  ): Promise<any> {
     this.logger.log(`💬 Procesando WhatsApp Nexo para: ${data.recipient}`);
-    
+
     // 1️⃣ Obtener configuración de Nexo desde la BD (NO desde .env)
     const companyConfig = await this.getCompanyWhatsappConfig(data.companyId);
-    
+
     if (!companyConfig || !companyConfig.token) {
-      throw new Error(`❌ Configuración de Nexo no encontrada para empresa ${data.companyId}`);
+      throw new Error(
+        `❌ Configuración de Nexo no encontrada para empresa ${data.companyId}`,
+      );
     }
 
     // 2️⃣ Obtener y procesar el mensaje
     let mensaje = '';
-    
-    if (data.templateId && data.templateId !== 'direct-whatsapp' && data.templateId !== 'simple') {
+
+    if (
+      data.templateId &&
+      data.templateId !== 'direct-whatsapp' &&
+      data.templateId !== 'simple'
+    ) {
       // Usar plantilla desde BD
       try {
-        const template = await this.templatesService.findOne(data.templateId, data.companyId);
+        const template = await this.templatesService.findOne(
+          data.templateId,
+          data.companyId,
+        );
         mensaje = template.content;
-        
+
         // Reemplazar variables en la plantilla
         if (data.variables) {
-          Object.keys(data.variables).forEach(key => {
+          Object.keys(data.variables).forEach((key) => {
             // Ignorar campos especiales (b64, mediaUrl, etc)
             if (key === 'b64' || key === 'mediaUrl' || key === 'mediaType') {
               return;
             }
-            
+
             const placeholder = `{{${key}}}`;
             const value = data.variables?.[key] || '';
             mensaje = mensaje.replace(new RegExp(placeholder, 'g'), value);
           });
         }
       } catch (error: any) {
-        this.logger.warn(`⚠️ Template ${data.templateId} no encontrado, usando mensaje directo`);
-        mensaje = data.text || data.html || data.variables?.text || 'Mensaje de WhatsApp';
+        this.logger.warn(
+          `⚠️ Template ${data.templateId} no encontrado, usando mensaje directo`,
+        );
+        mensaje =
+          data.text ||
+          data.html ||
+          data.variables?.text ||
+          'Mensaje de WhatsApp';
       }
     } else {
       // Mensaje directo (sin plantilla)
-      mensaje = data.text || data.html || data.variables?.text || 'Mensaje de WhatsApp';
+      mensaje =
+        data.text || data.html || data.variables?.text || 'Mensaje de WhatsApp';
     }
 
     // 3️⃣ Preparar payload para Nexo API
     const nexoPayload: any = {
-      para: data.recipient,      // Nexo limpiará el número automáticamente
+      para: data.recipient, // Nexo limpiará el número automáticamente
       mensaje: mensaje,
     };
 
@@ -186,12 +221,12 @@ export class NotificationProcessor extends WorkerHost {
     // 5️⃣ Enviar con Nexo usando el token de la BD
     const result = await this.nexoWhatsappProvider.send(
       companyConfig.token,
-      nexoPayload
+      nexoPayload,
     );
-    
+
     this.logger.log(`✅ WhatsApp Nexo enviado exitosamente`);
     this.logger.log(`📊 Respuesta Nexo:`, JSON.stringify(result));
-    
+
     return {
       provider: 'nexo',
       ...result,
@@ -205,19 +240,22 @@ export class NotificationProcessor extends WorkerHost {
    */
   private async processSms(data: SendNotificationDto, job: Job): Promise<any> {
     this.logger.log(`📱 Procesando SMS para: ${data.recipient}`);
-    
+
     // Obtener configuración de la empresa desde la BD
     const companyConfig = await this.getCompanySmsConfig(data.companyId);
-    
+
     // Obtener y procesar plantilla si existe
     let text = '';
     if (data.templateId && data.templateId !== 'direct-sms') {
-      const template = await this.templatesService.findOne(data.templateId, data.companyId);
+      const template = await this.templatesService.findOne(
+        data.templateId,
+        data.companyId,
+      );
       text = template.content;
-      
+
       // Reemplazar variables si existen
       if (data.variables) {
-        Object.keys(data.variables).forEach(key => {
+        Object.keys(data.variables).forEach((key) => {
           const placeholder = `{{${key}}}`;
           const value = data.variables?.[key] || '';
           text = text.replace(new RegExp(placeholder, 'g'), value);
@@ -242,28 +280,30 @@ export class NotificationProcessor extends WorkerHost {
     };
 
     const result = await this.smsProvider.send(smsConfig, smsPayload);
-    
-    this.logger.log(`✅ SMS enviado a ${data.recipient}, ID: ${result.messageId}`);
-    
+
+    this.logger.log(
+      `✅ SMS enviado a ${data.recipient}, ID: ${result.messageId}`,
+    );
+
     return result;
   }
 
   /**
    * ✅ IMPLEMENTACIÓN CORRECTA - CONSULTA BD
-   * 
+   *
    * Obtiene la configuración de WhatsApp Nexo desde la base de datos.
-   * 
+   *
    * Tablas involucradas:
    * - Company_Providers_Config: Contiene el token específico de cada empresa
    * - Provider: Contiene info del proveedor (NEXO_WHATSAPP)
-   * 
+   *
    * Ejemplo de datos en BD:
    * Company_Providers_Config:
    *   - id: "30ba6347-ffae-11f0-86e6-a2aaf909b30d"
    *   - company_id: "25a63d10-eff4-11f0-86e6-a2aaf909b30d"
    *   - provider_id: 1
    *   - config: {"token": "15c461b4-76ac-4c71-ac98-975901a98efb"}
-   * 
+   *
    * Provider:
    *   - id: 1
    *   - name: "NEXO_WHATSAPP"
@@ -271,38 +311,46 @@ export class NotificationProcessor extends WorkerHost {
    */
   private async getCompanyWhatsappConfig(companyId: string): Promise<any> {
     try {
-      this.logger.log(`🔍 Buscando configuración de Nexo para empresa: ${companyId}`);
-      
+      this.logger.log(
+        `🔍 Buscando configuración de Nexo para empresa: ${companyId}`,
+      );
+
       // 1️⃣ Buscar el provider de Nexo WhatsApp
       const nexoProvider = await this.providerRepository.findOne({
-        where: { name: 'NEXO_WHATSAPP', status: 'ACTIVE' as any }
+        where: { name: 'NEXO_WHATSAPP', status: 'ACTIVE' as any },
       });
 
       if (!nexoProvider) {
-        this.logger.error('❌ Provider NEXO_WHATSAPP no encontrado en la tabla Provider');
-        
+        this.logger.error(
+          '❌ Provider NEXO_WHATSAPP no encontrado en la tabla Provider',
+        );
+
         // 🔧 FALLBACK: Usar .env solo si no está en BD (desarrollo)
         const envToken = process.env.NEXO_API_TOKEN;
         if (envToken) {
-          this.logger.warn('⚠️ Usando token de .env como fallback (solo para desarrollo)');
+          this.logger.warn(
+            '⚠️ Usando token de .env como fallback (solo para desarrollo)',
+          );
           return {
             provider: 'nexo',
             token: envToken,
-            source: 'env_fallback'
+            source: 'env_fallback',
           };
         }
-        
+
         throw new Error('Provider NEXO_WHATSAPP no configurado');
       }
 
-      this.logger.log(`✅ Provider encontrado: ${nexoProvider.name} (ID: ${nexoProvider.id})`);
+      this.logger.log(
+        `✅ Provider encontrado: ${nexoProvider.name} (ID: ${nexoProvider.id})`,
+      );
 
       // 2️⃣ Buscar la configuración específica de esta empresa
       const companyConfig = await this.companyProviderConfigRepository.findOne({
-        where: { 
+        where: {
           companyId: companyId,
-          providerId: Number(nexoProvider.id)
-        }
+          providerId: Number(nexoProvider.id),
+        },
       });
 
       if (!companyConfig) {
@@ -310,26 +358,29 @@ export class NotificationProcessor extends WorkerHost {
       }
 
       this.logger.log(`✅ Configuración encontrada para empresa ${companyId}`);
-      
+
       // 3️⃣ Extraer el token del campo JSON 'config'
       const token = companyConfig.config?.token;
-      
+
       if (!token) {
         throw new Error('Token de Nexo no encontrado en la configuración');
       }
 
-      this.logger.log(`🔑 Token de Nexo obtenido desde BD: ${token.substring(0, 10)}...`);
+      this.logger.log(
+        `🔑 Token de Nexo obtenido desde BD: ${token.substring(0, 10)}...`,
+      );
 
       return {
         provider: 'nexo',
         token: token,
         providerId: nexoProvider.id,
         companyConfigId: companyConfig.id,
-        source: 'database'
+        source: 'database',
       };
-
     } catch (error: any) {
-      this.logger.error(`❌ Error obteniendo configuración de Nexo: ${error.message}`);
+      this.logger.error(
+        `❌ Error obteniendo configuración de Nexo: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -339,12 +390,23 @@ export class NotificationProcessor extends WorkerHost {
    * TODO: Implementar consulta a BD similar a getCompanyWhatsappConfig
    */
   private async getCompanySmsConfig(companyId: string): Promise<any> {
-    // Por ahora, usar .env (en el futuro, consultar BD igual que WhatsApp)
-    return {
-      provider: 'vonage',
-      apiKey: process.env.VONAGE_API_KEY,
-      apiSecret: process.env.VONAGE_API_SECRET,
-      fromNumber: process.env.VONAGE_FROM_NUMBER || 'OmniNotify',
-    };
+    try {
+      // ✅ OBTENER CONFIGURACIÓN GLOBAL DESDE BD
+      const credentials = await this.systemConfigService.getVonageCredentials();
+
+      return {
+        provider: 'vonage',
+        apiKey: credentials.apiKey,
+        apiSecret: credentials.apiSecret,
+        fromNumber: credentials.fromNumber,
+        source: 'system_config', // Indicar que viene de configuración global
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `❌ Error obteniendo configuración SMS global: ${error.message}`,
+      );
+      throw new Error(`No se pudo obtener configuración SMS: ${error.message}`);
+    }
   }
+  
 }

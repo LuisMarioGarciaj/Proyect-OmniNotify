@@ -62,4 +62,18 @@ export const tagsService = {
       throw new Error('Error deleting tag');
     }
   },
+
+  // NUEVO: Obtener contactos completos de un tag
+  async getTagContacts(tagId: string) {
+    const res = await fetch(`${API_URL}/tags/${tagId}/contacts`, {
+      headers: getAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      throw new Error('Error fetching tag contacts');
+    }
+
+    const data = await res.json();
+    return data.contacts || [];
+  }
 };

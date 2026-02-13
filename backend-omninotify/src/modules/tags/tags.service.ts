@@ -31,12 +31,54 @@ export class TagsService {
   }
 
   // Obtener todas las etiquetas de una compañía
-  async findAllByCompany(companyId: string): Promise<Tag[]> {
-    return await this.tagsRepository.find({
-      where: { company_id: companyId },
-      order: { name: 'ASC' },
-    });
+  // src/modules/tags/tags.service.ts - ACTUALIZAR método findAllByCompany
+async findAllByCompany(companyId: string): Promise<any[]> {
+  const tags = await this.tagsRepository
+    .createQueryBuilder('tag')
+    .leftJoinAndSelect('tag.contacts', 'contact')
+    .where('tag.company_id = :companyId', { companyId })
+    .orderBy('tag.name', 'ASC')
+    .getMany();
+
+  // Agregar información adicional
+  return tags.map(tag => ({
+    ...tag,
+    contacts_count: tag.contacts?.length || 0,
+    // Si quieres mostrar solo algunos datos de los contactos
+    contacts_preview: tag.contacts?.slice(0, 5).map(contact => ({
+      id: contact.id,
+      name: contact.name,
+      email: contact.email,
+      phone: contact.phone
+    })) || []
+  }));
+}
+
+// Método para obtener tag con todos sus contactos
+async findTagWithContacts(id: string, companyId: string): Promise<any> {
+  const tag = await this.tagsRepository
+    .createQueryBuilder('tag')
+    .leftJoinAndSelect('tag.contacts', 'contact')
+    .where('tag.id = :id', { id })
+    .andWhere('tag.company_id = :companyId', { companyId })
+    .getOne();
+
+  if (!tag) {
+    throw new NotFoundException(`Tag con ID ${id} no encontrada`);
   }
+
+  return {
+    ...tag,
+    contacts_count: tag.contacts?.length || 0,
+    contacts: tag.contacts?.map(contact => ({
+      id: contact.id,
+      name: contact.name,
+      email: contact.email,
+      phone: contact.phone,
+      created_at: contact.created_at
+    })) || []
+  };
+}
 
   // Buscar etiqueta por ID
   async findOne(id: string, companyId?: string): Promise<Tag> {

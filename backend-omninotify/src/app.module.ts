@@ -12,7 +12,8 @@ import { TagsModule } from './modules/tags/tags.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { CompaniesModule } from './modules/companies/companies.module';
-import { DashboardModule } from './modules/dashboard/dashboard.module'; 
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { SystemModule } from './modules/system/system.module'; 
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     NotificationsModule,
     CompaniesModule,
     DashboardModule,
+    SystemModule,
   ],
   controllers: [AppController],
   providers: [AppService],
