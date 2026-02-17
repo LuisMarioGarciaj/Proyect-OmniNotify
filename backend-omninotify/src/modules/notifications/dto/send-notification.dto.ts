@@ -32,10 +32,10 @@ export enum NotificationStatus {
  */
 export class SendNotificationDto {
   // ========== CAMPOS REQUERIDOS ==========
-
   @IsUUID()
   @IsNotEmpty()
   companyId: string;
+
 
   @IsEnum(NotificationChannel)
   @IsNotEmpty()
@@ -45,9 +45,13 @@ export class SendNotificationDto {
   @IsNotEmpty()
   recipient: string; // Email, teléfono (E.164) o número WhatsApp
 
+  @IsOptional()
+  @IsString()
+  templateAlias?: string;
+
   @IsUUID()
   @IsNotEmpty()
-  templateId: string;
+  templateId?: string;
 
   // ========== CAMPOS OPCIONALES GENERALES ==========
 

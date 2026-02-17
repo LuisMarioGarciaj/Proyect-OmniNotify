@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 
 export enum NotificationChannel {
   EMAIL = 'EMAIL',
@@ -7,6 +7,7 @@ export enum NotificationChannel {
 }
 
 @Entity('Template')
+@Index(['company_id', 'alias', 'channel'])
 export class Template {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -23,6 +24,10 @@ export class Template {
 
   @Column({ type: 'varchar', length: 150 })
   name: string;
+
+  @Column({ type: 'varchar', length: 100 })
+  @Index() // Índice simple para búsquedas
+  alias: string;
 
   @Column({ type: 'text' })
   content: string;
