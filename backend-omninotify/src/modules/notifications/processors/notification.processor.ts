@@ -3,6 +3,8 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { HttpService } from '@nestjs/axios'; // ✅ NUEVO - Para descargar archivos
+import { firstValueFrom } from 'rxjs';
 
 import {
   SendNotificationDto,
@@ -35,17 +37,22 @@ export class NotificationProcessor extends WorkerHost {
   constructor(
     @InjectRepository(ScheduledNotification)
     private scheduledNotificationRepository: Repository<ScheduledNotification>,
+    
     @InjectRepository(NotificationLog)
     private notificationLogsRepository: Repository<NotificationLog>,
-    @InjectRepository(CompanyProviderConfig) // ✅ NUEVO - Para consultar config de empresa
+    
+    @InjectRepository(CompanyProviderConfig)
     private companyProviderConfigRepository: Repository<CompanyProviderConfig>,
-    @InjectRepository(Provider) // ✅ NUEVO - Para consultar providers
+    
+    @InjectRepository(Provider)
     private providerRepository: Repository<Provider>,
+    
     private readonly emailProvider: EmailProvider,
     private readonly smsProvider: SMSProvider,
     private readonly nexoWhatsappProvider: NexoWhatsappProvider,
     private readonly templatesService: TemplatesService,
     private readonly systemConfigService: SystemConfigService,
+    private readonly httpService: HttpService, // ✅ NUEVO - Para descargar archivos
   ) {
     super();
   }
@@ -142,9 +149,18 @@ export class NotificationProcessor extends WorkerHost {
     }
   }
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // WHATSAPP con soporte de ADJUNTOS
+  // ═════════════════════════════════════════════════════════════════════════
+
   /**
-   * ✅ IMPLEMENTACIÓN CORRECTA - CONSULTA BD
-   * Obtiene el token de Nexo desde la tabla Company_Providers_Config
+   * ✅ Procesamiento de WhatsApp con Nexo
+   * 
+   * Funcionalidades:
+   * 1. Obtiene token de Nexo desde la BD (Company_Providers_Config)
+   * 2. Procesa el template y reemplaza variables
+   * 3. Si hay attachments → descarga y convierte a base64
+   * 4. Envía a Nexo API en formato { para, mensaje, b64 }
    */
   private async processWhatsapp(
     data: SendNotificationDto,
@@ -152,7 +168,7 @@ export class NotificationProcessor extends WorkerHost {
   ): Promise<any> {
     this.logger.log(`💬 Procesando WhatsApp Nexo para: ${data.recipient}`);
 
-    // 1️⃣ Obtener configuración de Nexo desde la BD (NO desde .env)
+    // 1️⃣ Obtener configuración de Nexo desde la BD
     const companyConfig = await this.getCompanyWhatsappConfig(data.companyId);
 
     if (!companyConfig || !companyConfig.token) {
@@ -161,7 +177,7 @@ export class NotificationProcessor extends WorkerHost {
       );
     }
 
-    // 2️⃣ Obtener y procesar el mensaje
+    // 2️⃣ Obtener y procesar el mensaje del template
     let mensaje = '';
 
     if (
@@ -180,7 +196,7 @@ export class NotificationProcessor extends WorkerHost {
         // Reemplazar variables en la plantilla
         if (data.variables) {
           Object.keys(data.variables).forEach((key) => {
-            // Ignorar campos especiales (b64, mediaUrl, etc)
+            // Ignorar campos especiales
             if (key === 'b64' || key === 'mediaUrl' || key === 'mediaType') {
               return;
             }
@@ -206,15 +222,49 @@ export class NotificationProcessor extends WorkerHost {
         data.text || data.html || data.variables?.text || 'Mensaje de WhatsApp';
     }
 
-    // 3️⃣ Preparar payload para Nexo API
+    // 3️⃣ Preparar payload base para Nexo API
     const nexoPayload: any = {
       para: data.recipient, // Nexo limpiará el número automáticamente
       mensaje: mensaje,
     };
 
-    // 4️⃣ Agregar media (base64) si existe
-    if (data.variables?.b64) {
-      this.logger.log('📎 Mensaje con media (base64)');
+    // 4️⃣ ✅ NUEVO — Procesar adjuntos (descargar y convertir a base64)
+    if (data.attachments && data.attachments.length > 0) {
+      const attachment = data.attachments[0]; // Nexo solo soporta 1 archivo a la vez
+
+      this.logger.log(
+        `📎 Descargando adjunto: ${attachment.url.substring(0, 50)}... (${attachment.type})`,
+      );
+
+      try {
+        // Descargar el archivo y convertir a base64
+        const base64Data = await this.downloadAndConvertToBase64(
+          attachment.url,
+        );
+
+        // Agregar al payload en formato Nexo
+        nexoPayload.b64 = {
+          data: base64Data,
+        };
+
+        // Si hay caption, sobrescribir el mensaje
+        if (attachment.caption) {
+          nexoPayload.mensaje = attachment.caption;
+        }
+
+        this.logger.log(
+          `✅ Adjunto convertido a base64 (${base64Data.length} caracteres)`,
+        );
+      } catch (error: any) {
+        this.logger.error(`❌ Error descargando adjunto: ${error.message}`);
+        throw new Error(
+          `No se pudo descargar el archivo desde ${attachment.url}: ${error.message}`,
+        );
+      }
+    }
+    // Fallback: soporte para formato antiguo (variables.b64)
+    else if (data.variables?.b64) {
+      this.logger.log('📎 Usando b64 desde variables (formato legacy)');
       nexoPayload.b64 = data.variables.b64;
     }
 
@@ -235,8 +285,69 @@ export class NotificationProcessor extends WorkerHost {
     };
   }
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // HELPER: Descargar archivo desde URL y convertir a base64
+  // ═════════════════════════════════════════════════════════════════════════
+
   /**
-   * Procesa envío de SMS (Vonage/Twilio)
+   * Descarga un archivo desde una URL pública (o data URL) y lo convierte a base64 puro
+   * 
+   * Soporta:
+   * - URLs públicas: https://cdn.example.com/image.jpg
+   * - Data URLs: data:image/jpeg;base64,/9j/4AAQ...
+   * 
+   * @param url URL pública o data URL
+   * @returns Base64 string puro (sin prefijo "data:image/jpeg;base64,")
+   */
+  private async downloadAndConvertToBase64(url: string): Promise<string> {
+    try {
+      // Caso 1: Si es data URL (base64 embebido en el string)
+      if (url.startsWith('data:')) {
+        this.logger.log('📎 Data URL detectado, extrayendo base64...');
+        
+        // Formato: data:image/jpeg;base64,/9j/4AAQ...
+        // Queremos solo: /9j/4AAQ...
+        const base64Match = url.match(/^data:[^;]+;base64,(.+)$/);
+        
+        if (!base64Match) {
+          throw new Error('Data URL inválido - no contiene base64');
+        }
+        
+        return base64Match[1]; // Solo el base64 puro
+      }
+
+      // Caso 2: URL pública normal — descargar el archivo
+      this.logger.log(`📥 Descargando archivo desde: ${url.substring(0, 50)}...`);
+      
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          responseType: 'arraybuffer',
+          timeout: 30000, // 30 segundos
+          maxRedirects: 5,
+        }),
+      );
+
+      // Convertir ArrayBuffer → Buffer → Base64
+      const buffer = Buffer.from(response.data);
+      const base64 = buffer.toString('base64');
+
+      this.logger.log(
+        `✅ Archivo descargado y convertido (${buffer.length} bytes → ${base64.length} chars base64)`,
+      );
+
+      return base64;
+    } catch (error: any) {
+      this.logger.error(`❌ Error descargando ${url}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // SMS
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Procesa envío de SMS (Vonage)
    */
   private async processSms(data: SendNotificationDto, job: Job): Promise<any> {
     this.logger.log(`📱 Procesando SMS para: ${data.recipient}`);
@@ -288,26 +399,16 @@ export class NotificationProcessor extends WorkerHost {
     return result;
   }
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // CONFIG HELPERS
+  // ═════════════════════════════════════════════════════════════════════════
+
   /**
-   * ✅ IMPLEMENTACIÓN CORRECTA - CONSULTA BD
-   *
-   * Obtiene la configuración de WhatsApp Nexo desde la base de datos.
-   *
+   * ✅ Obtiene la configuración de WhatsApp Nexo desde la base de datos
+   * 
    * Tablas involucradas:
-   * - Company_Providers_Config: Contiene el token específico de cada empresa
-   * - Provider: Contiene info del proveedor (NEXO_WHATSAPP)
-   *
-   * Ejemplo de datos en BD:
-   * Company_Providers_Config:
-   *   - id: "30ba6347-ffae-11f0-86e6-a2aaf909b30d"
-   *   - company_id: "25a63d10-eff4-11f0-86e6-a2aaf909b30d"
-   *   - provider_id: 1
-   *   - config: {"token": "15c461b4-76ac-4c71-ac98-975901a98efb"}
-   *
-   * Provider:
-   *   - id: 1
-   *   - name: "NEXO_WHATSAPP"
-   *   - status: "ACTIVE"
+   * - Company_Providers_Config: token específico de cada empresa
+   * - Provider: info del proveedor (NEXO_WHATSAPP)
    */
   private async getCompanyWhatsappConfig(companyId: string): Promise<any> {
     try {
@@ -387,7 +488,6 @@ export class NotificationProcessor extends WorkerHost {
 
   /**
    * Obtener configuración de SMS de la empresa
-   * TODO: Implementar consulta a BD similar a getCompanyWhatsappConfig
    */
   private async getCompanySmsConfig(companyId: string): Promise<any> {
     try {
@@ -399,7 +499,7 @@ export class NotificationProcessor extends WorkerHost {
         apiKey: credentials.apiKey,
         apiSecret: credentials.apiSecret,
         fromNumber: credentials.fromNumber,
-        source: 'system_config', // Indicar que viene de configuración global
+        source: 'system_config',
       };
     } catch (error: any) {
       this.logger.error(
@@ -408,5 +508,4 @@ export class NotificationProcessor extends WorkerHost {
       throw new Error(`No se pudo obtener configuración SMS: ${error.message}`);
     }
   }
-  
 }

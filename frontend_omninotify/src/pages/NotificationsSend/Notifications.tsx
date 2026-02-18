@@ -9,7 +9,7 @@ import ContactsSelectionModal from './ContactsSelectionModal';
 import GroupsSelectionModal from './GroupsSelectionModal';
 import { api } from '../../services/api';
 import { getCompany } from '../../services/company.service'; // <-- IMPORTAR
-
+import FileUploadWhatsApp from '../../components/FileUploadWhatsapp';
 // Define los tipos localmente
 interface Contact {
   id: string;
@@ -162,8 +162,10 @@ const NotificationsSend: React.FC = () => {
   const [scheduleTime, setScheduleTime] = useState<string>('09:00');
 
   // Estado para media URL (WhatsApp)
-  const [mediaUrl, setMediaUrl] = useState<string>('');
-  const [mediaType, setMediaType] = useState<string>('image');
+  const [whatsappFile, setWhatsappFile] = useState<{
+    url: string;
+    type: 'image' | 'video' | 'document' | 'audio';
+  } | null>(null);
 
   // Variables - Inicializar con valores por defecto
   const [variables, setVariables] = useState<Variables>(() => {
@@ -183,8 +185,6 @@ const NotificationsSend: React.FC = () => {
       fechaLimite: fechaLimiteDate.toLocaleDateString('es-ES'),
       numeroFactura: 'INV-' + new Date().getFullYear() + '-' + 
         Math.floor(Math.random() * 1000).toString().padStart(3, '0'),
-      mediaUrl: '',
-      mediaType: 'image'
     };
   });
 
@@ -633,13 +633,12 @@ const NotificationsSend: React.FC = () => {
       return;
     }
 
-    // Validar programación si es "later"
     if (scheduleType === 'later') {
       if (!scheduleDate || !scheduleTime) {
         showMessage('Selecciona fecha y hora para programar', 'error');
         return;
       }
-      
+
       if (!isValidSchedule(scheduleDate, scheduleTime)) {
         showMessage('La fecha/hora programada debe ser futura', 'error');
         return;
@@ -650,169 +649,157 @@ const NotificationsSend: React.FC = () => {
     setResult(null);
 
     try {
-      // Preparar destinatarios únicos
       const uniqueRecipients = [...new Set(selectedContacts)];
-      const totalRecipients = selectedRecipientType === 'group' 
-        ? getContactsFromSelectedGroups() 
-        : uniqueRecipients.length;
 
-      console.log(`Iniciando envío a ${totalRecipients} destinatarios únicos (${selectedTemplate.channel})`);
+      console.log(
+        `🚀 Enviando ${selectedTemplate.channel} a ${uniqueRecipients.length} destinatarios`
+      );
 
-      // ENDPOINTS POR CANAL
-      let endpoint = '';
-      if (selectedTemplate.channel === 'EMAIL') {
-        endpoint = '/email/send-notification';
-      } else if (selectedTemplate.channel === 'SMS') {
-        endpoint = '/sms/send-direct';
-      } else if (selectedTemplate.channel === 'WHATSAPP') {
-        // WhatsApp - decidir qué endpoint usar según el caso
-        if (mediaUrl) {
-          endpoint = '/whatsapp/send-media';
-        } else {
-          endpoint = '/whatsapp/send';
+      // ───── Scheduling UTC correcto (Bolivia -04:00) ─────
+      const scheduling =
+        scheduleType === 'later'
+          ? {
+              is_scheduled: true,
+              send_at: new Date(
+                `${scheduleDate}T${scheduleTime}:00-04:00`
+              ).toISOString(),
+            }
+          : { is_scheduled: false };
+
+      // ───── Limpiar variables ─────
+      const cleanVariables: Record<string, string> = {};
+      Object.entries(variables).forEach(([key, val]) => {
+        if (val !== undefined && val !== null) {
+          cleanVariables[key] = String(val);
         }
-      }
+      });
 
-      // Reemplazar variables en el contenido
-      const finalContent = replaceVariables(selectedTemplate.content, variables);
+      // ───── Contenido final ─────
+      const finalContent = replaceVariables(
+        selectedTemplate.content,
+        variables
+      );
 
-      // Actualizar variables con mediaUrl y mediaType
-      const updatedVariables = {
-        ...variables,
-        mediaUrl: mediaUrl || '',
-        mediaType: mediaType || 'image'
-      };
+      // ───── Adjuntos WhatsApp ─────
+      // ───── Adjuntos WhatsApp ─────
+      const attachments =
+        selectedTemplate.channel === 'WHATSAPP' && whatsappFile
+          ? [
+              {
+                url: whatsappFile.url,
+                type: whatsappFile.type,
+                caption: replaceVariables(selectedTemplate.content, variables),
+              },
+            ]
+          : undefined;
 
-      // PROMESAS DE ENVÍO
-      const promises = uniqueRecipients.map(async (recipient): Promise<NotificationResult> => {
-        let payload: any = {};
-        
-        // CONSTRUIR PAYLOAD SEGÚN CANAL
-        if (selectedTemplate.channel === 'EMAIL') {
-          payload = {
-            to: recipient,
-            subject: `${selectedTemplate.name} - ${variables.empresa || 'Mi Empresa'}`,
-            html: finalContent,
-            text: finalContent.replace(/<[^>]*>/g, ''),
+      // ───── Promesas ─────
+      const promises = uniqueRecipients.map(
+        async (recipient): Promise<NotificationResult> => {
+          const payload: Record<string, any> = {
+            channel: selectedTemplate.channel,
+            recipient,
             templateId: selectedTemplate.id,
-            companyId: companyId,
-            companyName: variables.empresa || 'Mi Empresa',
-            variables: updatedVariables,
-            schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null
-          };
-        } 
-        else if (selectedTemplate.channel === 'SMS') {
-          payload = {
-            to: recipient,
-            text: finalContent,
-            templateId: selectedTemplate.id,
-            companyId: companyId,
-            variables: updatedVariables,
-            provider: 'vonage',
-            config: {
-              apiKey: '84a24d93',
-              apiSecret: '46Xump31CGyK88hf',
-              fromNumber: 'OmniNotify'
+            variables: cleanVariables,
+            scheduling,
+            metadata: {
+              companyId,
+              companyName: variables.empresa || 'Mi Empresa',
+              sentFrom: 'web-app',
             },
-            schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null
+            content: finalContent,
           };
-        }
-        else if (selectedTemplate.channel === 'WHATSAPP') {
-          if (mediaUrl) {
-            // WhatsApp con media
-            payload = {
-              to: recipient,
-              body: finalContent,
-              mediaUrl: mediaUrl,
-              mediaType: mediaType,
-              companyId: companyId,
-              companyName: variables.empresa || 'Mi Empresa',
-              templateId: selectedTemplate.id,
-              schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null,
-              variables: updatedVariables
+
+          if (attachments) {
+            payload.attachments = attachments;
+          }
+
+          console.log(
+            `📤 Payload → ${recipient}`,
+            JSON.stringify(payload, null, 2)
+          );
+
+          try {
+            const response = await api.post(
+              '/notifications/send',
+              payload
+            );
+
+            const success = isSuccessResponse
+              ? isSuccessResponse(response.data)
+              : true;
+
+            return {
+              recipient,
+              success,
+              data: response.data?.data || response.data,
+              scheduled: scheduling.is_scheduled,
+              channel: selectedTemplate.channel,
             };
-          } else {
-            // WhatsApp texto simple
-            payload = {
-              to: recipient,
-              body: finalContent,
-              companyId: companyId,
-              companyName: variables.empresa || 'Mi Empresa',
-              templateId: selectedTemplate.id,
-              schedule: scheduleType === 'later' ? `${scheduleDate}T${scheduleTime}:00` : null,
-              variables: updatedVariables
+          } catch (error: any) {
+            return {
+              recipient,
+              success: false,
+              error:
+                error?.response?.data?.message ||
+                error?.message ||
+                'Error desconocido',
+              scheduled: scheduling.is_scheduled,
+              channel: selectedTemplate.channel,
             };
           }
         }
+      );
 
-        console.log(`Enviando ${selectedTemplate.channel} a: ${recipient}`);
-        
-        try {
-          const response = await api.post(endpoint, payload);
-          console.log(`Respuesta para ${recipient}:`, response.data);
-          
-          const success = isSuccessResponse(response.data);
-          
-          return {
-            recipient,
-            success,
-            data: response.data.data || response.data,
-            scheduled: !!payload.schedule,
-            channel: selectedTemplate.channel
-          };
-        } catch (error: any) {
-          console.error(`Error enviando a ${recipient}:`, error);
-          return {
-            recipient,
-            success: false,
-            error: error.response?.data?.message || error.message || 'Error desconocido',
-            scheduled: !!payload.schedule,
-            channel: selectedTemplate.channel
-          };
-        }
-      });
-      
       const results = await Promise.all(promises);
-      const successCount = results.filter(r => r.success).length;
-      
-      // NOMBRE DEL CANAL PARA MOSTRAR
-      const channelName = selectedTemplate.channel === 'EMAIL' ? 'EMAIL' : 
-                         selectedTemplate.channel === 'SMS' ? 'SMS' : 'WHATSAPP';
-      
+      const successCount = results.filter((r) => r.success).length;
+
+      const channelName = selectedTemplate.channel;
+
       setResult({
         success: successCount > 0,
-        message: scheduleType === 'now'
-          ? `Enviados ${successCount} de ${uniqueRecipients.length} ${channelName}`
-          : `Programados ${uniqueRecipients.length} ${channelName}`,
-        results: results,
+        message:
+          scheduleType === 'now'
+            ? `Enviados ${successCount} de ${uniqueRecipients.length} ${channelName}`
+            : `Programados ${uniqueRecipients.length} ${channelName}`,
+        results,
         total: uniqueRecipients.length,
         successful: successCount,
         scheduled: scheduleType === 'later',
-        channel: selectedTemplate.channel
+        channel: selectedTemplate.channel,
       });
-      
-      if (scheduleType === 'now') {
-        if (successCount > 0) {
-          showMessage(`${successCount} ${channelName} enviado(s) exitosamente`, 'success');
-        } else {
-          showMessage(`No se pudo enviar ningún ${channelName}`, 'error');
-        }
-      } else {
-        showMessage(`${uniqueRecipients.length} ${channelName} programado(s) exitosamente`, 'success');
-      }
 
+      if (successCount > 0) {
+        showMessage(
+          scheduleType === 'now'
+            ? `${successCount} ${channelName} enviado(s) exitosamente`
+            : `${uniqueRecipients.length} ${channelName} programado(s) exitosamente`,
+          'success'
+        );
+      } else {
+        showMessage(
+          `No se pudo enviar ningún ${channelName}`,
+          'error'
+        );
+      }
     } catch (error: any) {
-      console.error('Error en el envío:', error);
+      console.error('❌ Error global:', error);
+
       setResult({
         success: false,
         message: 'Error en el envío',
-        error: error.response?.data?.message || error.message || 'Error desconocido'
+        error:
+          error?.response?.data?.message ||
+          error?.message ||
+          'Error desconocido',
       });
+
       showMessage('Error en el envío', 'error');
     } finally {
       setSending(false);
     }
   };
+
 
   // Verificar si botón debe estar deshabilitado
   const isSendButtonDisabled = (): boolean => {
@@ -866,24 +853,6 @@ const NotificationsSend: React.FC = () => {
     setVariables(prev => ({
       ...prev,
       [variable]: value || ''
-    }));
-  };
-
-  // Manejar cambio de media URL
-  const handleMediaUrlChange = (value: string): void => {
-    setMediaUrl(value);
-    setVariables(prev => ({
-      ...prev,
-      mediaUrl: value || ''
-    }));
-  };
-
-  // Manejar cambio de media type
-  const handleMediaTypeChange = (value: string): void => {
-    setMediaType(value);
-    setVariables(prev => ({
-      ...prev,
-      mediaType: value || 'image'
     }));
   };
 
@@ -1046,45 +1015,18 @@ const NotificationsSend: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">URL del Media</label>
-                    <input
-                      type="url"
-                      value={mediaUrl}
-                      onChange={(e) => handleMediaUrlChange(e.target.value)}
-                      className="w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                      placeholder="https://ejemplo.com/imagen.jpg"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      URL pública de la imagen, PDF o documento
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Tipo de Media</label>
-                    <select
-                      value={mediaType}
-                      onChange={(e) => handleMediaTypeChange(e.target.value)}
-                      className="w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                    >
-                      <option value="image">Imagen</option>
-                      <option value="document">Documento</option>
-                      <option value="video">Video</option>
-                      <option value="audio">Audio</option>
-                    </select>
-                  </div>
-
-                  {mediaUrl && (
-                    <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-                      <div className="flex items-center gap-2 text-emerald-700">
-                        <CheckCircle className="w-4 h-4" />
-                        <span className="font-medium">Media configurado:</span>
-                        <span className="text-sm truncate">{mediaUrl}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <FileUploadWhatsApp
+                onFileSelect={(url: any, type: any) => {
+                  setWhatsappFile({ url, type });
+                  console.log('✅ Archivo seleccionado:', { url, type });
+                }}
+                onFileRemove={() => {
+                  setWhatsappFile(null);
+                  console.log('🗑️ Archivo removido');
+                }}
+                currentFile={whatsappFile}
+                maxSizeMB={5}
+              />
               </div>
             )}
 
@@ -1492,16 +1434,20 @@ const NotificationsSend: React.FC = () => {
                     </div>
                   </div>
 
-                  {selectedTemplate.channel === 'WHATSAPP' && mediaUrl && (
+                  {selectedTemplate.channel === 'WHATSAPP' && whatsappFile && (
                     <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
                       <div className="flex items-center gap-2 text-emerald-700">
                         <MessageCircle className="w-4 h-4" />
                         <span className="font-medium">Media adjunto:</span>
-                        <span className="text-sm truncate">{mediaUrl}</span>
+                        <span className="text-sm">{whatsappFile.type}</span>
                       </div>
-                      <p className="text-xs text-emerald-600 mt-1">
-                        Tipo: {mediaType}
-                      </p>
+                      {whatsappFile.type === 'image' && (
+                        <img
+                          src={whatsappFile.url}
+                          alt="Preview"
+                          className="mt-2 rounded-lg max-h-32 object-contain"
+                        />
+                      )}
                     </div>
                   )}
 
@@ -1551,7 +1497,7 @@ const NotificationsSend: React.FC = () => {
                       {selectedTemplate.channel === 'WHATSAPP' && (
                         <div className="flex justify-between">
                           <span>Con Media:</span>
-                          <span className="font-medium">{mediaUrl ? 'Sí' : 'No'}</span>
+                          <span className="font-medium">{whatsappFile ? 'Sí' : 'No'}</span>
                         </div>
                       )}
                     </div>

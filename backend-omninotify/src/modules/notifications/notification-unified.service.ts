@@ -1,4 +1,4 @@
-// src/modules/notifications/services/notification-unified.service.ts
+// src/modules/notifications/notification-unified.service.ts
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -30,9 +30,15 @@ export class NotificationUnifiedService {
 
   /**
    * 🎯 MÉTODO PRINCIPAL UNIFICADO
+   * 
    * Decide automáticamente:
-   * - Si es scheduled → guarda en SCHEDULED_NOTIFICATION
-   * - Si es inmediato → encola directo → se guarda en NOTIFICATION_LOGS al enviar
+   * - Si is_scheduled = true → guarda en SCHEDULED_NOTIFICATION y encola con delay
+   * - Si is_scheduled = false → encola directo para envío inmediato
+   * 
+   * El worker (NotificationProcessor) se encarga de:
+   * - Guardar en NOTIFICATION_LOGS
+   * - Enviar por el canal correspondiente (Email, SMS, WhatsApp)
+   * - Procesar adjuntos si existen (descargar y convertir a base64)
    */
   async send(companyId: string, dto: SendUnifiedNotificationDto) {
     this.logger.log(`📨 Enviando notificación: ${dto.channel} → ${dto.recipient}`);
@@ -43,22 +49,45 @@ export class NotificationUnifiedService {
     // 2️⃣ Validar destinatario según canal
     this.validateRecipient(dto.channel, dto.recipient);
 
-    // 3️⃣ Decidir: ¿Es programado o inmediato?
+    // 3️⃣ Validar adjuntos (solo WhatsApp puede tener adjuntos)
+    if (dto.attachments && dto.attachments.length > 0) {
+      if (dto.channel !== 'WHATSAPP') {
+        throw new BadRequestException(
+          'Los adjuntos solo están disponibles para el canal WHATSAPP'
+        );
+      }
+      
+      // Nexo API solo soporta 1 archivo a la vez
+      if (dto.attachments.length > 1) {
+        this.logger.warn(
+          `⚠️ Se enviaron ${dto.attachments.length} adjuntos, pero Nexo solo soporta 1. Se usará el primero.`
+        );
+      }
+    }
+
+    // 4️⃣ Decidir: ¿Es programado o inmediato?
     const isScheduled = dto.scheduling?.is_scheduled === true && dto.scheduling?.send_at;
 
     if (isScheduled) {
       // ✅ PROGRAMADO → Guardar en SCHEDULED_NOTIFICATION
       return this.scheduleNotification(companyId, template, dto);
     } else {
-      // ✅ INMEDIATO → Encolar directo (se guardará en NOTIFICATION_LOGS al enviar)
+      // ✅ INMEDIATO → Encolar directo
       return this.sendImmediate(companyId, template, dto);
     }
   }
 
+  // ═════════════════════════════════════════════════════════════════════════
+  // PRIVATE HELPERS
+  // ═════════════════════════════════════════════════════════════════════════
+
   /**
    * 🔍 Resolver template por alias O por ID (compatible)
    */
-  private async resolveTemplate(companyId: string, dto: SendUnifiedNotificationDto): Promise<Template> {
+  private async resolveTemplate(
+    companyId: string, 
+    dto: SendUnifiedNotificationDto
+  ): Promise<Template> {
     let template: Template | null = null;
 
     // Opción 1: Buscar por alias (recomendado)
@@ -87,10 +116,15 @@ export class NotificationUnifiedService {
       });
 
       if (!template) {
-        throw new NotFoundException(`Plantilla con ID "${dto.templateId}" no encontrada`);
+        throw new NotFoundException(
+          `Plantilla con ID "${dto.templateId}" no encontrada`
+        );
       }
-    } else {
-      throw new BadRequestException('Debes proporcionar templateAlias o templateId');
+    } 
+    else {
+      throw new BadRequestException(
+        'Debes proporcionar templateAlias o templateId'
+      );
     }
 
     return template;
@@ -101,15 +135,16 @@ export class NotificationUnifiedService {
    */
   private validateRecipient(channel: string, recipient: string): void {
     switch (channel) {
-      case 'EMAIL':
+      case 'EMAIL': {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(recipient)) {
           throw new BadRequestException('Email inválido');
         }
         break;
+      }
 
       case 'SMS':
-      case 'WHATSAPP':
+      case 'WHATSAPP': {
         const phoneRegex = /^\+?[1-9]\d{7,14}$/;
         if (!phoneRegex.test(recipient)) {
           throw new BadRequestException(
@@ -117,6 +152,7 @@ export class NotificationUnifiedService {
           );
         }
         break;
+      }
     }
   }
 
@@ -146,25 +182,26 @@ export class NotificationUnifiedService {
       status: ScheduledNotificationStatus.SCHEDULED,
     });
 
-
     await this.scheduledRepo.save(scheduled);
 
-    // Encolar con delay
+    // Calcular delay hasta la fecha programada
     const delay = scheduledAt.getTime() - now.getTime();
     
+    // Encolar con delay
     await this.notificationQueue.add(
       'send-notification',
       {
-        scheduledNotificationId: scheduled.id, // ✅ IMPORTANTE
+        scheduledNotificationId: scheduled.id, // ✅ Para actualizar el estado después
         companyId,
         templateId: template.id,
         channel: dto.channel,
         recipient: dto.recipient,
-        variables: dto.variables,
-        attachments: dto.attachments,
+        variables: dto.variables || {},
+        attachments: dto.attachments || [], // ✅ Adjuntos
+        metadata: dto.metadata || {},
       },
       {
-        delay,
+        delay, // Milisegundos hasta el envío
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
       },
@@ -181,19 +218,22 @@ export class NotificationUnifiedService {
         recipient: dto.recipient,
         scheduledAt: scheduledAt.toISOString(),
         status: 'SCHEDULED',
+        hasAttachments: (dto.attachments?.length ?? 0) > 0,
       },
     };
   }
 
   /**
    * 🚀 Envío inmediato (encolar sin guardar en BD aún)
+   * 
+   * El log se guardará en NOTIFICATION_LOGS cuando el worker procese el job
    */
   private async sendImmediate(
     companyId: string,
     template: Template,
     dto: SendUnifiedNotificationDto,
   ) {
-    // Encolar para envío inmediato
+    // Encolar para envío inmediato (sin delay)
     const job = await this.notificationQueue.add(
       'send-notification',
       {
@@ -202,8 +242,8 @@ export class NotificationUnifiedService {
         channel: dto.channel,
         recipient: dto.recipient,
         variables: dto.variables || {},
-        attachments: dto.attachments,
-        metadata: dto.metadata,
+        attachments: dto.attachments || [], // ✅ Adjuntos
+        metadata: dto.metadata || {},
       },
       {
         attempts: 3,
@@ -213,8 +253,6 @@ export class NotificationUnifiedService {
 
     this.logger.log(`🚀 Encolado para envío inmediato: Job ${job.id}`);
 
-    // ✅ El worker guardará en NOTIFICATION_LOGS cuando se envíe
-
     return {
       success: true,
       message: 'Notificación encolada para envío inmediato',
@@ -223,6 +261,7 @@ export class NotificationUnifiedService {
         channel: dto.channel,
         recipient: dto.recipient,
         status: 'QUEUED',
+        hasAttachments: (dto.attachments?.length ?? 0) > 0,
       },
     };
   }

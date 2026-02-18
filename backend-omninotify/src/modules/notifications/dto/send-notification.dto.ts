@@ -8,7 +8,8 @@ import {
   IsDateString,
   IsEmail,
   IsBoolean,
-  IsUrl
+  IsUrl,
+  IsArray
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -88,6 +89,10 @@ export class SendNotificationDto {
   @IsOptional()
   @IsBoolean()
   useLogo?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  attachments?: any[];
 
   // ========== CAMPOS ESPECÍFICOS PARA WHATSAPP Y SMS ==========
 

@@ -1,6 +1,6 @@
 // src/modules/notifications/dto/send-unified.dto.ts
 import { 
-  IsEnum, IsString, IsOptional, IsObject, 
+  IsEnum, IsString, IsOptional, IsObject, IsUrl, IsIn,
   ValidateIf, IsISO8601, IsArray, ValidateNested 
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -12,6 +12,7 @@ export enum NotificationChannel {
   WHATSAPP = 'WHATSAPP',
 }
 
+// ─── Programación ─────────────────────────────────────────────────────────────
 export class SchedulingDto {
   @ApiProperty({ 
     description: '¿Es programado?',
@@ -21,7 +22,7 @@ export class SchedulingDto {
   is_scheduled?: boolean;
 
   @ApiPropertyOptional({ 
-    description: 'Fecha de envío programado (ISO 8601)',
+    description: 'Fecha de envío programado (ISO 8601 UTC)',
     example: '2026-02-20T15:00:00Z'
   })
   @ValidateIf(o => o.is_scheduled === true)
@@ -29,94 +30,184 @@ export class SchedulingDto {
   send_at?: string;
 }
 
+// ─── Adjunto para WhatsApp ────────────────────────────────────────────────────
 export class AttachmentDto {
-  @ApiProperty({ example: 'https://cdn.com/file.pdf' })
+  @ApiProperty({ 
+    description: 'URL pública del archivo (o data URL en base64)',
+    example: 'https://cdn.example.com/image.jpg'
+  })
   @IsString()
   url: string;
 
-  @ApiProperty({ example: 'Factura.pdf' })
-  @IsString()
-  filename: string;
+  @ApiProperty({ 
+    description: 'Tipo de archivo',
+    enum: ['image', 'video', 'document', 'audio'],
+    example: 'image'
+  })
+  @IsIn(['image', 'video', 'document', 'audio'])
+  type: 'image' | 'video' | 'document' | 'audio';
 
-  @ApiPropertyOptional({ example: 'application/pdf' })
+  @ApiPropertyOptional({ 
+    description: 'Nombre del archivo (opcional)',
+    example: 'factura.pdf' 
+  })
+  @IsOptional()
+  @IsString()
+  filename?: string;
+
+  @ApiPropertyOptional({ 
+    description: 'Caption o texto que acompaña el archivo (solo WhatsApp)',
+    example: 'Aquí está tu factura'
+  })
+  @IsOptional()
+  @IsString()
+  caption?: string;
+
+  @ApiPropertyOptional({ 
+    description: 'MIME type del archivo',
+    example: 'image/jpeg'
+  })
   @IsOptional()
   @IsString()
   mimeType?: string;
 }
 
+// ─── DTO Principal ────────────────────────────────────────────────────────────
+
 /**
  * DTO UNIFICADO para envío de notificaciones
+ * 
  * Soporta: EMAIL, SMS, WHATSAPP
- * Con scheduling automático
+ * Con scheduling automático y adjuntos para WhatsApp
+ * 
+ * @example Envío inmediato
+ * ```json
+ * {
+ *   "channel": "WHATSAPP",
+ *   "templateId": "uuid-here",
+ *   "recipient": "+59176131645",
+ *   "variables": { "name": "Juan" },
+ *   "scheduling": { "is_scheduled": false }
+ * }
+ * ```
+ * 
+ * @example Envío programado con adjunto
+ * ```json
+ * {
+ *   "channel": "WHATSAPP",
+ *   "templateAlias": "ORDER_CONFIRMATION",
+ *   "recipient": "+59176131645",
+ *   "variables": { "orderNumber": "123" },
+ *   "scheduling": {
+ *     "is_scheduled": true,
+ *     "send_at": "2026-02-20T15:00:00Z"
+ *   },
+ *   "attachments": [{
+ *     "url": "https://cdn.com/image.jpg",
+ *     "type": "image",
+ *     "caption": "Tu orden está lista"
+ *   }]
+ * }
+ * ```
  */
 export class SendUnifiedNotificationDto {
-  // ========================================
-  // ❌ NO enviar companyId (viene del JWT)
-  // ========================================
+  // ═════════════════════════════════════════════════════════════════════════
+  // ❌ NO enviar companyId — se extrae automáticamente del JWT
+  // ═════════════════════════════════════════════════════════════════════════
   
   @ApiProperty({ 
     description: 'Canal de notificación',
     enum: NotificationChannel,
-    example: NotificationChannel.EMAIL
+    example: NotificationChannel.WHATSAPP
   })
   @IsEnum(NotificationChannel)
   channel: NotificationChannel;
 
   @ApiProperty({ 
-    description: 'Destinatario (email o teléfono +59176131645)',
-    example: 'cliente@example.com'
+    description: 'Destinatario: email (para EMAIL) o número con formato E.164 (para SMS/WHATSAPP)',
+    examples: {
+      email: { value: 'cliente@example.com', summary: 'Email' },
+      phone: { value: '+59176131645', summary: 'Teléfono Bolivia' }
+    }
   })
   @IsString()
   recipient: string;
 
-  // ========================================
-  // Template: Soporta ALIAS o ID (compatible)
-  // ========================================
+  // ═════════════════════════════════════════════════════════════════════════
+  // Template: Soporta ALIAS (recomendado) o ID (compatible)
+  // ═════════════════════════════════════════════════════════════════════════
   
   @ApiPropertyOptional({ 
-    description: '✅ RECOMENDADO: Alias de la plantilla',
-    example: 'WELCOME_EMAIL'
+    description: '✅ RECOMENDADO: Alias de la plantilla (ej: "WELCOME_EMAIL")',
+    example: 'ORDER_CONFIRMATION'
   })
   @IsOptional()
   @IsString()
   templateAlias?: string;
 
   @ApiPropertyOptional({ 
-    description: 'UUID de la plantilla (compatible)',
-    example: 'uuid-here'
+    description: 'UUID de la plantilla (compatible con código antiguo)',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
   })
   @IsOptional()
   @IsString()
   templateId?: string;
 
-  @ApiProperty({ 
+  // ═════════════════════════════════════════════════════════════════════════
+  // Variables para reemplazar en el template: {{ name }}, {{ orderNumber }}
+  // ═════════════════════════════════════════════════════════════════════════
+  
+  @ApiPropertyOptional({ 
     description: 'Variables para inyectar en la plantilla',
-    example: { name: 'Juan', company: 'Mi Empresa' }
+    example: { 
+      name: 'María García', 
+      orderNumber: 'ORD-12345',
+      company: 'Mi Empresa S.A.'
+    }
   })
   @IsOptional()
   @IsObject()
   variables?: Record<string, any>;
 
-  // ========================================
-  // SCHEDULING (automático)
-  // ========================================
+  // ═════════════════════════════════════════════════════════════════════════
+  // SCHEDULING — Envío inmediato o programado
+  // ═════════════════════════════════════════════════════════════════════════
   
   @ApiPropertyOptional({ 
-    description: 'Configuración de programación',
-    type: SchedulingDto
+    description: 'Configuración de programación (inmediato o futuro)',
+    type: SchedulingDto,
+    examples: {
+      immediate: {
+        value: { is_scheduled: false },
+        summary: 'Envío inmediato'
+      },
+      scheduled: {
+        value: { 
+          is_scheduled: true, 
+          send_at: '2026-02-20T15:00:00Z' 
+        },
+        summary: 'Envío programado'
+      }
+    }
   })
   @IsOptional()
   @ValidateNested()
   @Type(() => SchedulingDto)
   scheduling?: SchedulingDto;
 
-  // ========================================
-  // ATTACHMENTS (solo EMAIL/WHATSAPP)
-  // ========================================
+  // ═════════════════════════════════════════════════════════════════════════
+  // ATTACHMENTS — Solo para WhatsApp (imágenes, videos, documentos, audio)
+  // ═════════════════════════════════════════════════════════════════════════
   
   @ApiPropertyOptional({ 
-    description: 'Archivos adjuntos',
-    type: [AttachmentDto]
+    description: 'Archivos adjuntos (solo WhatsApp). Nexo API soporta un archivo a la vez.',
+    type: [AttachmentDto],
+    example: [{
+      url: 'https://cdn.example.com/factura.pdf',
+      type: 'document',
+      filename: 'Factura_123.pdf',
+      caption: 'Tu factura del mes'
+    }]
   })
   @IsOptional()
   @IsArray()
@@ -124,11 +215,18 @@ export class SendUnifiedNotificationDto {
   @Type(() => AttachmentDto)
   attachments?: AttachmentDto[];
 
-  // ========================================
-  // METADATA ADICIONAL
-  // ========================================
+  // ═════════════════════════════════════════════════════════════════════════
+  // METADATA — Información adicional para logs o tracking interno
+  // ═════════════════════════════════════════════════════════════════════════
   
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ 
+    description: 'Metadata adicional para logs internos',
+    example: { 
+      sentFrom: 'web-app',
+      userId: 'user-123',
+      campaignId: 'campaign-456'
+    }
+  })
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
