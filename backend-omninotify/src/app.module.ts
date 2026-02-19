@@ -14,6 +14,7 @@ import { TemplatesModule } from './modules/templates/templates.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { SystemModule } from './modules/system/system.module'; 
+import { CreditsModule } from './modules/credits/credits.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { SystemModule } from './modules/system/system.module';
     CompaniesModule,
     DashboardModule,
     SystemModule,
+    CreditsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -22,6 +22,14 @@ export class Company {
   })
   status: CompanyStatus;
 
+  @Column({ 
+    type: 'int', 
+    default: 0, 
+    name: 'current_credits',
+    comment: 'Balance actual de créditos de la empresa'
+  })
+  current_credits: number;
+
   @Column({ type: 'longtext', nullable: true })
   logo: string | null; // Guardará el base64
 
