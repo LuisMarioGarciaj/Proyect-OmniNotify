@@ -2,9 +2,10 @@ import React, { useState, useCallback } from 'react';
 import { Upload, X, File, Image, Video, FileText, Music } from 'lucide-react';
 
 interface FileUploadProps {
-  onFileSelect: (fileUrl: string, fileType: 'image' | 'video' | 'document' | 'audio') => void;
+  // ✅ FIX: agregado fileName como tercer parámetro
+  onFileSelect: (fileUrl: string, fileType: 'image' | 'video' | 'document' | 'audio', fileName: string) => void;
   onFileRemove: () => void;
-  currentFile: { url: string; type: string } | null;
+  currentFile: { url: string; type: string; fileName?: string } | null;
   maxSizeMB?: number;
 }
 
@@ -18,7 +19,6 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Tipos de archivo permitidos por Nexo WhatsApp
   const acceptedTypes = {
     image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     video: ['video/mp4', 'video/3gpp'],
@@ -44,37 +44,13 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
     }
   };
 
-  const uploadToCloudinary = async (file: File): Promise<string> => {
-    // ⚠️ IMPORTANTE: Reemplaza con tu propio Cloudinary preset
-    // O comenta esto y usa la opción B (base64 directo)
-    const CLOUDINARY_URL = 'https://api.cloudinary.com/v1_1/YOUR_CLOUD_NAME/upload';
-    const UPLOAD_PRESET = 'YOUR_UPLOAD_PRESET';
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', UPLOAD_PRESET);
-
-    const response = await fetch(CLOUDINARY_URL, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error('Error subiendo archivo a Cloudinary');
-    }
-
-    const data = await response.json();
-    return data.secure_url;
-  };
-
   const convertToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        const base64 = reader.result as string;
-        // Remover el prefijo "data:image/png;base64," para obtener solo el base64
-        const base64Data = base64.split(',')[1];
-        resolve(base64Data);
+        // Retornamos el data URL completo (data:image/png;base64,...)
+        // El processor en el backend extrae solo el base64 puro
+        resolve(reader.result as string);
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
@@ -98,16 +74,11 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
         throw new Error('Tipo de archivo no soportado');
       }
 
-      // ─── OPCIÓN A: Subir a Cloudinary (recomendado para archivos grandes) ───
-      // Descomentar si tienes Cloudinary configurado:
-      // const publicUrl = await uploadToCloudinary(file);
-      // onFileSelect(publicUrl, fileType);
+      // 3. Convertir a data URL (base64)
+      const dataUrl = await convertToBase64(file);
 
-      // ─── OPCIÓN B: Convertir a base64 y crear data URL ───
-      // (Funciona sin backend, pero el payload será grande)
-      const base64Data = await convertToBase64(file);
-      const dataUrl = `data:${file.type};base64,${base64Data}`;
-      onFileSelect(dataUrl, fileType);
+      // ✅ FIX: pasamos file.name como tercer argumento
+      onFileSelect(dataUrl, fileType, file.name);
 
       console.log('✅ Archivo procesado:', {
         name: file.name,
@@ -125,11 +96,8 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-
     const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) {
-      handleFile(files[0]);
-    }
+    if (files.length > 0) handleFile(files[0]);
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -144,9 +112,7 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
-      handleFile(files[0]);
-    }
+    if (files && files.length > 0) handleFile(files[0]);
   };
 
   return (
@@ -156,7 +122,6 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
       </label>
 
       {currentFile ? (
-        // ─── Vista previa del archivo ───
         <div className="relative rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <button
             onClick={onFileRemove}
@@ -171,7 +136,8 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-emerald-800">
-                Archivo adjunto
+                {/* ✅ Mostrar nombre real del archivo */}
+                {currentFile.fileName || 'Archivo adjunto'}
               </p>
               <p className="text-xs text-emerald-600 truncate">
                 Tipo: {currentFile.type}
@@ -190,7 +156,6 @@ const FileUploadWhatsApp: React.FC<FileUploadProps> = ({
           )}
         </div>
       ) : (
-        // ─── Zona de upload ───
         <div
           onDrop={handleDrop}
           onDragOver={handleDragOver}

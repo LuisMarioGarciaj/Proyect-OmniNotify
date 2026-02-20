@@ -9,7 +9,7 @@ import ContactsSelectionModal from './ContactsSelectionModal';
 import GroupsSelectionModal from './GroupsSelectionModal';
 import { api } from '../../services/api';
 import { getCompany } from '../../services/company.service'; // <-- IMPORTAR
-import FileUploadWhatsApp from '../../components/FileUploadWhatsapp';
+import FileUploadWhatsApp from '../../components/FileUploadWhatsApp';
 // Define los tipos localmente
 interface Contact {
   id: string;
@@ -165,6 +165,7 @@ const NotificationsSend: React.FC = () => {
   const [whatsappFile, setWhatsappFile] = useState<{
     url: string;
     type: 'image' | 'video' | 'document' | 'audio';
+    fileName?: string;
   } | null>(null);
 
   // Variables - Inicializar con valores por defecto
@@ -688,6 +689,7 @@ const NotificationsSend: React.FC = () => {
               {
                 url: whatsappFile.url,
                 type: whatsappFile.type,
+                fileName: whatsappFile.fileName, // ✅ FIX: nombre real del archivo
                 caption: replaceVariables(selectedTemplate.content, variables),
               },
             ]
@@ -1016,9 +1018,9 @@ const NotificationsSend: React.FC = () => {
                 </div>
 
                 <FileUploadWhatsApp
-                onFileSelect={(url: any, type: any) => {
-                  setWhatsappFile({ url, type });
-                  console.log('✅ Archivo seleccionado:', { url, type });
+                onFileSelect={(url: any, type: any, fileName?: string) => {
+                  setWhatsappFile({ url, type, fileName });
+                  console.log('✅ Archivo seleccionado:', { type, fileName });
                 }}
                 onFileRemove={() => {
                   setWhatsappFile(null);

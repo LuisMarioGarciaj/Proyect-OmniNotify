@@ -2,14 +2,14 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
-import { CompaniesService } from '../companies/companies.service'; // <-- IMPORTAR
+import { CompaniesService } from '../companies/companies.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
-    private companiesService: CompaniesService, // <-- INYECTAR
+    private companiesService: CompaniesService,
   ) {}
 
   async login(email: string, password: string) {
@@ -28,15 +28,22 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    // OBTENER EL NOMBRE DE LA EMPRESA
+    // Obtener nombre de empresa + estado de WhatsApp en paralelo
     let companyName = '';
+    let whatsappConfigured = false;
+
     try {
-      const company = await this.companiesService.findOne(user.company_id);
+      const [company, whatsappStatus] = await Promise.all([
+        this.companiesService.findOne(user.company_id),
+        this.companiesService.getWhatsappStatus(user.company_id),
+      ]);
+
       companyName = company?.name || '';
-      console.log(`📊 Empresa encontrada: ${companyName} para company_id: ${user.company_id}`);
+      whatsappConfigured = whatsappStatus.configured;
+
+      console.log(`📊 Empresa: ${companyName} | WhatsApp configurado: ${whatsappConfigured}`);
     } catch (error) {
-      console.error(`❌ Error al obtener empresa: ${error.message}`);
-      // Si hay error, dejar companyName vacío
+      console.error(`❌ Error al obtener datos de empresa: ${error.message}`);
     }
 
     const payload = {
@@ -46,8 +53,6 @@ export class AuthService {
       email: user.email,
     };
 
-    console.log('📦 Payload JWT:', payload);
-
     return {
       access_token: this.jwtService.sign(payload),
       user: {
@@ -56,8 +61,10 @@ export class AuthService {
         name: user.name,
         role: user.role,
         company_id: user.company_id,
-        company_name: companyName // <-- ¡AÑADIDO!
-      }
+        company_name: companyName,
+        // ✅ El frontend usa esto para saber si mostrar el modal de setup
+        whatsapp_configured: whatsappConfigured,
+      },
     };
   }
 }
