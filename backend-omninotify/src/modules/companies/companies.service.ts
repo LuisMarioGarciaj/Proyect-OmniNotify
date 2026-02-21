@@ -107,9 +107,14 @@ export class CompaniesService {
       return { configured: false, status: null };
     }
 
+    const token = config.config?.token;
+    const status = config.config?.status;
+
+    const isConfigured = !!token && status === 'ACTIVE';
+
     return {
-      configured: true,
-      status: config.config?.status || 'UNKNOWN',
+      configured: isConfigured,
+      status: status || 'UNKNOWN',
       environment: config.config?.environment || 'production',
       configuredAt: config.config?.configuredAt || null,
     };

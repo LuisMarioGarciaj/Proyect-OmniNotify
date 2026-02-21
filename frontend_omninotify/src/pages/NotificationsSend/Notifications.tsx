@@ -7,8 +7,9 @@ import {
 import TemplateSelectionModal from './TemplateSelectionModal';
 import ContactsSelectionModal from './ContactsSelectionModal';
 import GroupsSelectionModal from './GroupsSelectionModal';
+import ManualRecipientModal from './ManualRecipientModal';
 import { api } from '../../services/api';
-import { getCompany } from '../../services/company.service'; // <-- IMPORTAR
+import { getCompany } from '../../services/company.service';
 import FileUploadWhatsApp from '../../components/FileUploadWhatsApp';
 // Define los tipos localmente
 interface Contact {
@@ -155,6 +156,10 @@ const NotificationsSend: React.FC = () => {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showContactsModal, setShowContactsModal] = useState(false);
   const [showGroupsModal, setShowGroupsModal] = useState(false);
+  const [showManualModal, setShowManualModal] = useState(false);
+
+  // Contactos pendientes de guardar (ingresados manualmente con "guardar como contacto")
+  const [pendingContacts, setPendingContacts] = useState<Array<{name: string; phone?: string; email?: string}>>([]);
 
   // Programación
   const [scheduleType, setScheduleType] = useState<'now' | 'later'>('now');
@@ -456,38 +461,32 @@ const NotificationsSend: React.FC = () => {
     setTimeout(() => setMessage(null), 5000);
   };
 
-  // Agregar destinatario manual
+  // Agregar destinatario manual — ahora abre el modal
   const addManualRecipient = (): void => {
     if (!selectedTemplate) {
       showMessage('Selecciona un template primero', 'error');
       return;
     }
+    setShowManualModal(true);
+  };
 
-    const promptMsg = selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP'
-      ? 'Ingresa número (Ej: +59170797542):' 
-      : 'Ingresa email:';
-    
-    const input = prompt(promptMsg);
-    if (!input) return;
+  // Callback del ManualRecipientModal
+  const handleManualConfirm = (
+    value: string,
+    saveAsContact?: { name?: string; phone?: string; email?: string }
+  ): void => {
+    setShowManualModal(false);
 
-    if (selectedTemplate.channel === 'SMS' || selectedTemplate.channel === 'WHATSAPP') {
-      // Validar número de teléfono
-      if (!/^\+?\d{10,15}$/.test(input.replace(/\D/g, ''))) {
-        showMessage('Número inválido', 'error');
-        return;
-      }
-    } else {
-      // Validar email
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input)) {
-        showMessage('Email inválido', 'error');
-        return;
-      }
+    if (!selectedContacts.includes(value)) {
+      setSelectedContacts(prev => [...prev, value]);
     }
 
-    if (!selectedContacts.includes(input)) {
-      setSelectedContacts([...selectedContacts, input]);
-      showMessage('Destinatario agregado', 'success');
+    // Guardar contacto pendiente para crearlo al enviar
+    if (saveAsContact) {
+      setPendingContacts(prev => [...prev, { ...saveAsContact, company_id: companyId } as any]);
     }
+
+    showMessage('Destinatario agregado', 'success');
   };
 
   // Remover destinatario
@@ -755,6 +754,16 @@ const NotificationsSend: React.FC = () => {
 
       const results = await Promise.all(promises);
       const successCount = results.filter((r) => r.success).length;
+
+      // ── Guardar contactos pendientes (ingresados como "guardar como contacto") ──
+      if (pendingContacts.length > 0 && successCount > 0) {
+        await Promise.allSettled(
+          pendingContacts.map(contact =>
+            api.post('/contacts', { ...contact, company_id: companyId })
+          )
+        );
+        setPendingContacts([]);
+      }
 
       const channelName = selectedTemplate.channel;
 
@@ -1588,6 +1597,14 @@ const NotificationsSend: React.FC = () => {
           onToggleGroup={toggleGroup}
           onClose={() => setShowGroupsModal(false)}
           getContactsFromSelectedGroups={getContactsFromSelectedGroups}
+        />
+      )}
+
+      {showManualModal && selectedTemplate && (
+        <ManualRecipientModal
+          channel={selectedTemplate.channel}
+          onConfirm={handleManualConfirm}
+          onClose={() => setShowManualModal(false)}
         />
       )}
     </div>

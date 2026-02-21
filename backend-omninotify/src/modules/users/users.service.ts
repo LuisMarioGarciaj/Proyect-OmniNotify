@@ -6,7 +6,11 @@ import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User } from './entities/user.entity';
 import { Company, CompanyStatus } from '../companies/entities/company.entity';
+import { CompanyProviderConfig } from '../providers/entities/company-provider-config.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+
+// provider_id = 1 → NEXO_WHATSAPP (igual que en companies.service.ts)
+const NEXO_WHATSAPP_PROVIDER_ID = 1;
 
 @Injectable()
 export class UsersService {
@@ -15,6 +19,12 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+
+    // ✅ Necesario para que TypeORM registre CompanyProviderConfig en el módulo
+    // (la inserción real se hace via queryRunner.manager dentro de la transacción)
+    @InjectRepository(CompanyProviderConfig)
+    private readonly providerConfigRepo: Repository<CompanyProviderConfig>,
+
     private readonly dataSource: DataSource,
   ) {
     this.testConnection();
@@ -22,7 +32,7 @@ export class UsersService {
 
   async testConnection() {
     try {
-      const count = await this.userRepo.count();
+      await this.userRepo.count();
       this.logger.log(`✅ CONEXIÓN EXITOSA con la base de datos`);
     } catch (error) {
       this.logger.error(`❌ ERROR de conexión a la BD: ${error.message}`);
@@ -42,24 +52,22 @@ export class UsersService {
     await queryRunner.startTransaction();
 
     try {
-      // 1. Crear la Compañía
+      // ── 1. Crear la Empresa ──────────────────────────────────────────────
       const companyId = uuidv4();
-      
-      // Creamos el objeto usando la clase para que tome los defaults
+
       const companyInstance = queryRunner.manager.create(Company, {
         id: companyId,
         name: `Empresa de ${name}`,
         status: CompanyStatus.ACTIVE,
-        // Usamos "as any" para evitar que el modo estricto moleste con el null/undefined
-        logo: null as any, 
-        api_keys_config: null as any
+        logo: null as any,
+        api_keys_config: null as any,
       });
 
       await queryRunner.manager.save(companyInstance);
 
-      // 2. Crear el Usuario
+      // ── 2. Crear el Usuario ──────────────────────────────────────────────
       const hashedPassword = await bcrypt.hash(password, 10);
-      
+
       const userInstance = queryRunner.manager.create(User, {
         id: uuidv4(),
         company_id: companyId,
@@ -67,13 +75,35 @@ export class UsersService {
         email,
         password: hashedPassword,
         role: role || 'OPERATOR',
-        status: 'ACTIVE'
+        status: 'ACTIVE',
       });
 
       const savedUser = await queryRunner.manager.save(userInstance);
+
+      // ── 3. Crear la config de Nexo WhatsApp para esta empresa ──
+      // Todas las empresas usan el mismo token de Nexo (puede sobreescribirse desde Settings).
       
+      const providerConfig = queryRunner.manager.create(CompanyProviderConfig, {
+        id: uuidv4(),
+        companyId: companyId,
+        providerId: NEXO_WHATSAPP_PROVIDER_ID,
+        config: {
+          token: process.env.NEXO_API_TOKEN || '15c461b4-76ac-4c71-ac98-975901a98efb',
+          status: 'ACTIVE',
+          environment: 'production',
+          configuredAt: new Date().toISOString(),
+          configuredBy: email,
+        },
+      });
+
+      await queryRunner.manager.save(providerConfig);
+
+      this.logger.log(
+        `✅ Registro completo: empresa ${companyId} + usuario ${savedUser.id} + config Nexo creada`,
+      );
+
       await queryRunner.commitTransaction();
-      
+
       const { password: _, ...result } = savedUser;
       return result;
 
@@ -92,7 +122,7 @@ export class UsersService {
 
   async validatePassword(password: string, storedPassword: string) {
     if (!storedPassword.startsWith('$2b$') && !storedPassword.startsWith('$2a$')) {
-        return password === storedPassword;
+      return password === storedPassword;
     }
     return await bcrypt.compare(password, storedPassword);
   }

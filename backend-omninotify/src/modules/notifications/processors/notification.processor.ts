@@ -408,9 +408,14 @@ export class NotificationProcessor extends WorkerHost {
   // ═══════════════════════════════════════════════════════════════
 
   private async getCompanyWhatsappConfig(companyId: string): Promise<any> {
+    // provider_id = 1 corresponde a NEXO_WHATSAPP (hardcodeado igual que en companies.service.ts)
+    const NEXO_WHATSAPP_PROVIDER_ID = 1;
+
     try {
+      // ✅ FIX: Buscar directamente por id=1 en lugar de usar { name, status }
+      // porque la tabla PROVIDER no tiene columna "status"
       const nexoProvider = await this.providerRepository.findOne({
-        where: { name: 'NEXO_WHATSAPP', status: 'ACTIVE' as any },
+        where: { id: NEXO_WHATSAPP_PROVIDER_ID as any },
       });
 
       if (!nexoProvider) {
@@ -419,29 +424,45 @@ export class NotificationProcessor extends WorkerHost {
           this.logger.warn('⚠️ Usando token de .env (fallback desarrollo)');
           return { provider: 'nexo', token: envToken, source: 'env_fallback' };
         }
-        throw new Error('Provider NEXO_WHATSAPP no configurado');
+        throw new Error('Provider NEXO_WHATSAPP (id=1) no encontrado en la base de datos');
       }
 
+      // ✅ Buscar la config de esta empresa para Nexo WhatsApp
       const companyConfig = await this.companyProviderConfigRepository.findOne({
         where: {
           companyId: companyId,
-          providerId: Number(nexoProvider.id),
+          providerId: NEXO_WHATSAPP_PROVIDER_ID,
         },
       });
 
       if (!companyConfig) {
-        throw new Error(`Empresa ${companyId} no tiene configuración de Nexo`);
+        throw new Error(
+          `Empresa ${companyId} no tiene configuración de Nexo WhatsApp. ` +
+          'Registre la empresa nuevamente o inserte la fila manualmente en Company_Providers_Config.',
+        );
       }
 
       const token = companyConfig.config?.token;
+      const configStatus = companyConfig.config?.status;
+
+      // Si la fila existe pero el token está vacío (status PENDING),
+      // dar un mensaje accionable para el administrador
       if (!token) {
-        throw new Error('Token de Nexo no encontrado en la configuración');
+        if (configStatus === 'PENDING') {
+          throw new Error(
+            'WhatsApp no configurado para esta empresa. ' +
+            'Ve a Configuración y agrega el token de Nexo.',
+          );
+        }
+        throw new Error('Token de Nexo vacío en la configuración');
       }
+
+      this.logger.log(`✅ Config Nexo encontrada para empresa ${companyId} (status: ${configStatus})`);
 
       return {
         provider: 'nexo',
         token,
-        providerId: nexoProvider.id,
+        providerId: NEXO_WHATSAPP_PROVIDER_ID,
         source: 'database',
       };
     } catch (error: any) {
