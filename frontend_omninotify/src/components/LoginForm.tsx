@@ -219,7 +219,7 @@ const LoginForm: React.FC = () => {
                     company_name: data.company_name || '' // <-- AÑADIDO
                 };
             }
-            
+            userData.credits = 150; 
             console.log('📦 Guardando userData en localStorage:', userData);
             localStorage.setItem('user_data', JSON.stringify(userData));
 

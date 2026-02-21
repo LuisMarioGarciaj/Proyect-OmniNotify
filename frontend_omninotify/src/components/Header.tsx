@@ -1,6 +1,7 @@
 // src/components/Header.tsx
-import React from 'react';
-import { Bell, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bell, ChevronLeft, ChevronRight, Coins, CreditCard, Zap, TrendingUp } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 interface UserData {
   id: string;
@@ -8,6 +9,7 @@ interface UserData {
   name: string;
   role: string;
   company_id: string;
+  credits?: number;
 }
 
 interface HeaderProps {
@@ -18,38 +20,148 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ user, title, sidebarOpen, setSidebarOpen }) => {
+  const navigate = useNavigate();
+  const [credits, setCredits] = useState<number>(user?.credits || 0);
+  const [showCreditsTooltip, setShowCreditsTooltip] = useState(false);
+
+  useEffect(() => {
+    if (user?.company_id) {
+      setCredits(user.credits || 0);
+      
+      const handleCreditsUpdate = (event: CustomEvent) => {
+        if (event.detail.companyId === user.company_id) {
+          setCredits(event.detail.credits);
+        }
+      };
+
+      window.addEventListener('credits-updated' as any, handleCreditsUpdate);
+      
+      return () => {
+        window.removeEventListener('credits-updated' as any, handleCreditsUpdate);
+      };
+    }
+  }, [user]);
+
+  const handleRecharge = () => {
+    navigate('/credits/recharge');
+  };
+
+  const getCreditsColor = () => {
+    if (credits <= 50) return 'from-red-500 to-rose-500';
+    if (credits <= 200) return 'from-yellow-500 to-amber-500';
+    return 'from-green-500 to-emerald-500';
+  };
+
+  const getCreditsBgColor = () => {
+    if (credits <= 50) return 'bg-red-50 text-red-700 border-red-200';
+    if (credits <= 200) return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+    return 'bg-green-50 text-green-700 border-green-200';
+  };
+
   return (
-    <header className="bg-white shadow">
-      <div className="px-6 py-4">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center">
+    <header className="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-30 border-b border-gray-200/50">
+      <div className="px-4 sm:px-6 py-3">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          {/* Left section with title and welcome */}
+          <div className="flex items-center w-full sm:w-auto">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="hidden lg:block mr-4 p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg"
+              className="hidden lg:block mr-4 p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100/80 rounded-xl transition-all duration-200"
+              title={sidebarOpen ? "Contraer menú" : "Expandir menú"}
             >
               {sidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
             </button>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-800">{title}</h2>
-              <p className="text-gray-600">Welcome back, {user?.name || 'User'}!</p>
+            <div className="flex-1">
+              <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+                {title}
+              </h1>
+              <p className="text-sm text-gray-500 flex items-center gap-1 mt-0.5">
+                <span>👋</span>
+                Welcome back, <span className="font-semibold text-gray-700">{user?.name || 'User'}</span>!
+              </p>
             </div>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <button className="p-2 text-gray-600 hover:text-gray-800 relative">
+          {/* Right section with credits, notifications and profile */}
+          <div className="flex items-center justify-end w-full sm:w-auto gap-3">
+            {/* Credits Display - Versión mejorada */}
+            <div className="relative group">
+              <button
+                onClick={handleRecharge}
+                onMouseEnter={() => setShowCreditsTooltip(true)}
+                onMouseLeave={() => setShowCreditsTooltip(false)}
+                className={`flex items-center gap-3 px-4 py-2 rounded-xl border ${getCreditsBgColor()} hover:shadow-md transition-all duration-200 transform hover:scale-105`}
+              >
+                <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${getCreditsColor()} flex items-center justify-center shadow-sm`}>
+                  <Coins size={16} className="text-white" />
+                </div>
+                <div className="flex flex-col items-start">
+                  <span className="text-xs font-medium opacity-75">Créditos</span>
+                  <div className="flex items-center gap-1">
+                    <span className="font-bold text-lg leading-none">{credits.toLocaleString()}</span>
+                    <Zap size={14} className="opacity-60" />
+                  </div>
+                </div>
+                <div className="h-8 w-px bg-gray-200 mx-1"></div>
+                <CreditCard size={16} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+              </button>
+              
+              {/* Tooltip mejorado */}
+              {showCreditsTooltip && (
+                <div className="absolute right-0 top-full mt-2 w-48 bg-gray-900 text-white rounded-xl shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="absolute -top-1 right-6 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                  <p className="font-medium text-sm mb-1 flex items-center gap-1">
+                    <Coins size={14} />
+                    Tus Créditos
+                  </p>
+                  <p className="text-xs text-gray-300 mb-2">
+                    Usa tus créditos para enviar notificaciones
+                  </p>
+                  <div className="bg-gray-800 rounded-lg p-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Disponibles:</span>
+                      <span className={`font-bold ${
+                        credits <= 50 ? 'text-red-400' : credits <= 200 ? 'text-yellow-400' : 'text-green-400'
+                      }`}>
+                        {credits.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleRecharge}
+                    className="w-full mt-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-xs font-medium py-2 rounded-lg hover:from-blue-600 hover:to-indigo-600 transition-all"
+                  >
+                    Recargar Ahora
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Notifications - Versión mejorada */}
+            <button className="relative p-2.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100/80 rounded-xl transition-all duration-200">
               <Bell size={20} />
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-rose-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center border-2 border-white shadow-sm animate-pulse">
                 3
               </span>
             </button>
             
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold">
-                {user?.name?.charAt(0) || 'U'}
+            {/* User Profile - Versión mejorada */}
+            <div className="flex items-center gap-3 pl-2 border-l border-gray-200">
+              <div className="hidden md:block text-right">
+                <p className="font-semibold text-sm text-gray-800">{user?.name || 'User'}</p>
+                <p className="text-xs text-gray-500 flex items-center gap-1 justify-end">
+                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                  {user?.role || 'User'}
+                </p>
               </div>
-              <div className="ml-3 hidden md:block">
-                <p className="font-medium">{user?.name || 'User'}</p>
-                <p className="text-sm text-gray-600">{user?.role || 'User'}</p>
+              <div className="relative group">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-md cursor-pointer transform transition-transform group-hover:scale-105">
+                  {user?.name?.charAt(0) || 'U'}
+                </div>
+                {/* Tooltip del perfil (opcional) */}
+                <div className="absolute right-0 top-full mt-2 w-32 bg-gray-900 text-white text-xs rounded-lg p-2 text-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  Ver perfil
+                </div>
               </div>
             </div>
           </div>

@@ -1,3 +1,4 @@
+// src/components/Sidebar.tsx
 import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
@@ -12,9 +13,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Tag,
-  Building ,
-  MessageSquare
+  Building,
+  MessageSquare,
+  Coins,
+  Settings
 } from 'lucide-react';
+import { useAuthorization } from '../hooks/useAuthorization';
 
 interface SidebarProps {
   user?: {
@@ -23,6 +27,7 @@ interface SidebarProps {
     email: string;
     role: string;
     company_id?: string;
+    credits?: number;
   } | null;
 }
 
@@ -30,17 +35,26 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
+  
+  // Usar el hook de autorización
+  const { canAccess, isAdmin } = useAuthorization(user);
 
-  const menuItems = [
+  // Definir todos los menús disponibles
+  const allMenuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/dashboard' },
-    { id: 'company', label: 'Company', icon: <Building size={20} />, path: '/company' }, // Nueva Opción
+    { id: 'company', label: 'Company', icon: <Building size={20} />, path: '/company' },
     { id: 'templates', label: 'Templates', icon: <Mail size={20} />, path: '/templates' },
     { id: 'contacts', label: 'Contacts', icon: <Users size={20} />, path: '/contacts' },
     { id: 'tags', label: 'Tags', icon: <Tag size={20} />, path: '/tags' },
     { id: 'notifications', label: 'Send Notifications', icon: <Bell size={20} />, path: '/notifications' },
+    { id: 'credits', label: 'Mis Créditos', icon: <Coins size={20} />, path: '/credits/recharge' },
     { id: 'profile', label: 'Profile', icon: <User size={20} />, path: '/profile' },
-    { id: 'sms-config', label: 'Configuración SMS', icon: <MessageSquare size={20} />,path: '/sms-configuration'},
+    { id: 'sms-config', label: 'Configuración SMS', icon: <MessageSquare size={20} />, path: '/sms-configuration' },
+    { id: 'email-configuration', label: 'Configuración Email', icon: <Settings size={20} />, path: '/email-configuration' },
   ];
+
+  // Filtrar menús según permisos del rol
+  const menuItems = allMenuItems.filter(item => canAccess(item.id));
 
   const handleLogout = () => {
     localStorage.removeItem('auth_token');
@@ -51,6 +65,29 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
 
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen);
+  };
+
+  // Obtener el badge del rol
+  const getRoleBadge = () => {
+    if (!user) return null;
+    
+    const roleStyles = {
+      ADMIN: 'bg-purple-100 text-purple-800 border-purple-200',
+      OPERATOR: 'bg-blue-100 text-blue-800 border-blue-200'
+    };
+    
+    const roleLabels = {
+      ADMIN: 'Administrador',
+      OPERATOR: 'Operador'
+    };
+    
+    const role = user.role?.toUpperCase() as keyof typeof roleStyles;
+    
+    return (
+      <span className={`text-xs px-2 py-0.5 rounded-full border ${roleStyles[role] || roleStyles.OPERATOR}`}>
+        {roleLabels[role] || roleLabels.OPERATOR}
+      </span>
+    );
   };
 
   return (
@@ -127,7 +164,9 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
             {sidebarOpen && (
               <div className="ml-3 flex-1 min-w-0">
                 <p className="font-medium text-gray-800 truncate text-sm">{user?.name || 'User'}</p>
-                <p className="text-xs text-gray-600 truncate">{user?.email || ''}</p>
+                <div className="flex items-center gap-1 mt-0.5">
+                  {getRoleBadge()}
+                </div>
               </div>
             )}
             {!sidebarOpen && (
@@ -148,7 +187,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
             title={!sidebarOpen ? 'Logout' : ''}
           >
             <LogOut size={20} />
-            {sidebarOpen && <span className="ml-3">Logout</span>}
+            {sidebarOpen && <span className="ml-3">Cerrar Sesión</span>}
           </button>
         </div>
       </div>
@@ -210,6 +249,14 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
                   </NavLink>
                 ))}
               </nav>
+              
+              {/* Información del rol en móvil */}
+              <div className="mt-6 pt-4 border-t">
+                <div className="flex items-center justify-between px-3">
+                  <span className="text-xs text-gray-500">Tu rol:</span>
+                  {getRoleBadge()}
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -65,7 +65,7 @@ const translations = {
     role: "Tipo de Cuenta",
     roleAdmin: "Administrador",
     roleOperator: "Operador",
-    roleDescriptionAdmin: "Acceso completo a todas las funciones",
+    // roleDescriptionAdmin: "Acceso completo a todas las funciones",
     roleDescriptionOperator: "Acceso limitado para operaciones diarias",
     companyNote: "Una empresa será creada automáticamente para ti",
     signUp: "Crear Cuenta",
@@ -442,7 +442,7 @@ const RegisterForm: React.FC = () => {
                   {t.role}
                 </label>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className={`relative border rounded-xl p-4 cursor-pointer transition-all ${formData.role === 'ADMIN' 
+                  {/* <div className={`relative border rounded-xl p-4 cursor-pointer transition-all ${formData.role === 'ADMIN' 
                     ? 'border-green-500 bg-green-50' 
                     : 'border-gray-200 hover:border-gray-300'}`}
                     onClick={() => !isLoading && setFormData(prev => ({ ...prev, role: 'ADMIN' }))}
@@ -468,7 +468,7 @@ const RegisterForm: React.FC = () => {
                       <span className="font-semibold text-gray-800">{t.roleAdmin}</span>
                       <span className="text-xs text-gray-500 mt-1">{t.roleDescriptionAdmin}</span>
                     </div>
-                  </div>
+                  </div> */}
 
                   <div className={`relative border rounded-xl p-4 cursor-pointer transition-all ${formData.role === 'OPERATOR' 
                     ? 'border-green-500 bg-green-50' 
