@@ -1,15 +1,21 @@
-// src/modules/notifications/providers/sms.provider.ts
+// src/modules/notifications/providers/sms/sms.provider.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { Vonage } from '@vonage/server-sdk';
-import { SystemConfigService, VonageCredentials } from '../../../system/services/system-config.service';
+import { Twilio } from 'twilio'; // <--- IMPORTAR TWILIO
+import { SystemConfigService } from '../../../system/services/system-config.service'; // Ajusta la ruta
+// Importa las interfaces si las moviste a un archivo compartido
+import type { VonageCredentials, TwilioCredentials } from '../../../system/interfaces/system-config.interface';
 
 export interface SMSConfig {
   provider: 'vonage' | 'twilio';
+  // Vonage
   apiKey?: string;
   apiSecret?: string;
-  fromNumber?: string;
+  // Twilio
   accountSid?: string;
   authToken?: string;
+  // Común
+  fromNumber?: string;
 }
 
 export interface SMSContent {
@@ -24,65 +30,78 @@ export interface SMSContent {
 @Injectable()
 export class SMSProvider {
   private readonly logger = new Logger(SMSProvider.name);
+  
+  // Clientes cacheados para evitar recrearlos en cada envío
   private vonageClient: Vonage | null = null;
-  private currentApiKey: string | null = null;
-  private currentApiSecret: string | null = null;
+  private twilioClient: Twilio | null = null;
+  
+  // Guardamos las credenciales usadas para cada cliente
+  private currentVonageKey: string | null = null;
+  private currentVonageSecret: string | null = null;
+  private currentTwilioSid: string | null = null;
+  private currentTwilioToken: string | null = null;
 
   constructor(
-    private readonly systemConfigService: SystemConfigService, // ✅ INYECTAR
+    private readonly systemConfigService: SystemConfigService, // Inyectamos el servicio
   ) {}
+
   async send(config: SMSConfig, payload: SMSContent): Promise<any> {
-    this.logger.debug('📱 SMSProvider.send() llamado');
+    this.logger.debug(`📱 SMSProvider.send() llamado para proveedor: ${config.provider}`);
     
     try {
-      // Si no se proporciona config específica, usar la global de BD
-      if (!config.apiKey || !config.apiSecret) {
-        const globalConfig = await this.systemConfigService.getVonageCredentials();
-        config = {
-          provider: 'vonage',
-          apiKey: globalConfig.apiKey,
-          apiSecret: globalConfig.apiSecret,
-          fromNumber: globalConfig.fromNumber,
-        };
-      }
+      // --- LÓGICA PARA USAR CREDENCIALES GLOBALES POR DEFECTO ---
+      let finalConfig = { ...config };
 
-      this.validateConfig(config);
+      // Si faltan credenciales específicas, intentamos cargar las globales
+      if (config.provider === 'vonage' && (!config.apiKey || !config.apiSecret)) {
+        this.logger.log('📦 Usando credenciales globales de Vonage');
+        const globalCreds = await this.systemConfigService.getVonageCredentials();
+        finalConfig.apiKey = globalCreds.apiKey;
+        finalConfig.apiSecret = globalCreds.apiSecret;
+        finalConfig.fromNumber = finalConfig.fromNumber || globalCreds.fromNumber;
+      }
+      
+      if (config.provider === 'twilio' && (!config.accountSid || !config.authToken)) {
+        this.logger.log('📦 Usando credenciales globales de Twilio');
+        const globalCreds = await this.systemConfigService.getTwilioCredentials();
+        finalConfig.accountSid = globalCreds.accountSid;
+        finalConfig.authToken = globalCreds.authToken;
+        finalConfig.fromNumber = finalConfig.fromNumber || globalCreds.fromNumber;
+      }
+      // --- FIN DE LÓGICA GLOBAL ---
+
+      this.validateConfig(finalConfig);
       this.validatePayload(payload);
 
-      if (config.provider === 'vonage') {
-        return await this.sendViaVonage(config, payload);
-      } else if (config.provider === 'twilio') {
-        throw new Error('Twilio no implementado aún');
+      if (finalConfig.provider === 'vonage') {
+        return await this.sendViaVonage(finalConfig, payload);
+      } else if (finalConfig.provider === 'twilio') {
+        return await this.sendViaTwilio(finalConfig, payload); // <--- NUEVO
       } else {
-        throw new Error(`Proveedor no soportado: ${config.provider}`);
+        throw new Error(`Proveedor no soportado: ${finalConfig.provider}`);
       }
     } catch (error: any) {
       this.logger.error(`❌ Error enviando SMS: ${error.message}`);
+      // Relanzar el error para que el procesador lo maneje
       throw new Error(`SMS Provider Error: ${error.message}`);
     }
   }
 
   private async sendViaVonage(config: SMSConfig, payload: SMSContent) {
-    if (!this.vonageClient || 
-         this.currentApiKey !== config.apiKey || 
-         this.currentApiSecret !== config.apiSecret) {
+    // Reutilizar cliente si las credenciales no han cambiado
+    if (!this.vonageClient || this.currentVonageKey !== config.apiKey || this.currentVonageSecret !== config.apiSecret) {
       this.vonageClient = new Vonage({
         apiKey: config.apiKey,
         apiSecret: config.apiSecret,
       });
-      this.currentApiKey = config.apiKey!;
-      this.currentApiSecret = config.apiSecret!;
+      this.currentVonageKey = config.apiKey!;
+      this.currentVonageSecret = config.apiSecret!;
     }
 
-    const fromNumber = payload.from || config.fromNumber ||'OmniNotify';
-    
-    if (!fromNumber) {
-      throw new Error('Número de origen no configurado');
-    }
-
+    const fromNumber = payload.from || config.fromNumber || 'OmniNotify';
     const toNumber = this.formatToE164(payload.to);
     
-    this.logger.debug(`📤 Enviando: ${fromNumber} → ${toNumber}`);
+    this.logger.debug(`📤 Vonage: ${fromNumber} → ${toNumber}`);
 
     const smsOptions: any = {
       to: toNumber,
@@ -98,7 +117,6 @@ export class SMSProvider {
 
     if (response.messages && response.messages[0]) {
       const message = response.messages[0];
-      
       if (message.status === '0') {
         return {
           success: true,
@@ -114,39 +132,140 @@ export class SMSProvider {
         throw new Error(`Vonage API Error: ${message['error-text']} (${message.status})`);
       }
     }
-
     throw new Error('Respuesta inesperada de Vonage');
   }
 
-  private validateConfig(config: SMSConfig): void {
-    if (!config.provider) {
-      throw new Error('Proveedor SMS no especificado');
+  // ==================== NUEVO: ENVÍO POR TWILIO ====================
+  private async sendViaTwilio(config: SMSConfig, payload: SMSContent) {
+    // Reutilizar cliente de Twilio
+    if (!this.twilioClient || this.currentTwilioSid !== config.accountSid || this.currentTwilioToken !== config.authToken) {
+      this.twilioClient = new Twilio(config.accountSid, config.authToken);
+      this.currentTwilioSid = config.accountSid!;
+      this.currentTwilioToken = config.authToken!;
     }
+
+    const fromNumber = payload.from || config.fromNumber;
+    if (!fromNumber) {
+      throw new Error('Número de origen (fromNumber) es requerido para Twilio');
+    }
+    
+    const toNumber = this.formatToE164(payload.to);
+    
+    this.logger.debug(`📤 Twilio: ${fromNumber} → ${toNumber}`);
+
+    try {
+      const message = await this.twilioClient.messages.create({
+        body: payload.text,
+        from: fromNumber,
+        to: toNumber,
+        // statusCallback: payload.webhookUrl, // Opcional: URL para webhooks de estado
+      });
+
+      this.logger.log(`✅ Twilio Mensaje enviado. SID: ${message.sid}`);
+
+      return {
+        success: true,
+        provider: 'twilio',
+        messageId: message.sid,
+        to: message.to,
+        from: message.from,
+        status: message.status,
+        price: message.price,
+        priceUnit: message.priceUnit,
+        dateCreated: message.dateCreated,
+        // Twilio no da balance en la respuesta de envío
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error en Twilio API: ${error.message}`);
+      // Twilio lanza errores con más detalles, intenta extraerlos
+      throw new Error(`Twilio API Error: ${error.message}`);
+    }
+  }
+
+  // ==================== MÉTODO getBalance MEJORADO ====================
+  async getBalance(config?: SMSConfig): Promise<number> {
+    try {
+      let finalConfig = config;
+      
+      // Si no se proporciona configuración, usar la global de Vonage por defecto
+      if (!finalConfig) {
+        try {
+          const globalCreds = await this.systemConfigService.getVonageCredentials();
+          finalConfig = {
+            provider: 'vonage',
+            apiKey: globalCreds.apiKey,
+            apiSecret: globalCreds.apiSecret,
+          };
+          this.logger.log('📦 Usando credenciales globales de Vonage para consulta de balance');
+        } catch (error) {
+          throw new Error('No se pudo cargar configuración por defecto para balance');
+        }
+      }
+
+      if (finalConfig.provider !== 'vonage') {
+        throw new Error('La consulta de balance solo está disponible para Vonage');
+      }
+
+      if (!finalConfig.apiKey || !finalConfig.apiSecret) {
+        throw new Error('Credenciales Vonage requeridas para consultar balance');
+      }
+
+      // Usar el cliente existente o crear uno nuevo
+      if (!this.vonageClient || this.currentVonageKey !== finalConfig.apiKey || this.currentVonageSecret !== finalConfig.apiSecret) {
+        this.vonageClient = new Vonage({
+          apiKey: finalConfig.apiKey,
+          apiSecret: finalConfig.apiSecret,
+        });
+        this.currentVonageKey = finalConfig.apiKey;
+        this.currentVonageSecret = finalConfig.apiSecret;
+      }
+
+      const balance: any = await this.vonageClient.accounts.getBalance();
+      
+      // Lógica de extracción de balance (la misma que tenías)
+      if (balance && typeof balance === 'object') {
+        if (balance.value !== undefined) return Number(balance.value) || 0;
+        if (balance.balance !== undefined) return Number(balance.balance) || 0;
+        if (balance.amount !== undefined) return Number(balance.amount) || 0;
+      }
+      if (typeof balance === 'number') return balance;
+      if (typeof balance === 'string') return parseFloat(balance) || 0;
+      
+      return 0;
+    } catch (error: any) {
+      this.logger.error(`Error obteniendo balance: ${error.message}`);
+      throw new Error(`No se pudo obtener balance: ${error.message}`);
+    }
+  }
+
+  // ==================== MÉTODOS DE VALIDACIÓN (sin cambios) ====================
+  private validateConfig(config: SMSConfig): void {
+    if (!config.provider) throw new Error('Proveedor SMS no especificado');
 
     if (config.provider === 'vonage') {
       const missingFields: string[] = [];
       if (!config.apiKey) missingFields.push('apiKey');
       if (!config.apiSecret) missingFields.push('apiSecret');
-      
       if (missingFields.length > 0) {
         throw new Error(`Faltan campos Vonage: ${missingFields.join(', ')}`);
+      }
+    } else if (config.provider === 'twilio') {
+      const missingFields: string[] = [];
+      if (!config.accountSid) missingFields.push('accountSid');
+      if (!config.authToken) missingFields.push('authToken');
+      if (!config.fromNumber) missingFields.push('fromNumber');
+      if (missingFields.length > 0) {
+        throw new Error(`Faltan campos Twilio: ${missingFields.join(', ')}`);
       }
     }
   }
 
   private validatePayload(payload: SMSContent): void {
-    if (!payload.to) {
-      throw new Error('Número de destino requerido');
-    }
-
-    if (!payload.text?.trim()) {
-      throw new Error('Texto del mensaje requerido');
-    }
-
+    if (!payload.to) throw new Error('Número de destino requerido');
+    if (!payload.text?.trim()) throw new Error('Texto del mensaje requerido');
     if (!this.isValidE164(payload.to)) {
       throw new Error('Formato de número inválido. Use formato E.164: +521234567890');
     }
-
     if (payload.text.length > 1600) {
       throw new Error('Mensaje demasiado largo (máximo 1600 caracteres)');
     }
@@ -159,94 +278,9 @@ export class SMSProvider {
 
   formatToE164(phoneNumber: string, defaultCountryCode: string = '52'): string {
     let cleanNumber = phoneNumber.replace(/[\s\-\(\)]/g, '');
-    
-    if (cleanNumber.startsWith('+')) {
-      return cleanNumber;
-    }
-    
-    if (cleanNumber.startsWith('00')) {
-      cleanNumber = '+' + cleanNumber.substring(2);
-      return cleanNumber;
-    }
-    
-    if (cleanNumber.startsWith('0')) {
-      cleanNumber = cleanNumber.substring(1);
-    }
-    
-    if (!cleanNumber.startsWith('+')) {
-      cleanNumber = '+' + defaultCountryCode + cleanNumber;
-    }
-    
-    return cleanNumber;
-  }
-
-  // MÉTODO getBalance CORREGIDO - AQUÍ VA LA SOLUCIÓN
-  async getBalance(config?: SMSConfig): Promise<number> {
-    try {
-      // Si no se proporciona config, usar la global de BD
-      if (!config) {
-        const globalConfig = await this.systemConfigService.getVonageCredentials();
-        config = {
-          provider: 'vonage',
-          apiKey: globalConfig.apiKey,
-          apiSecret: globalConfig.apiSecret,
-        };
-      }
-    if (config.provider !== 'vonage') {
-      throw new Error('Solo disponible para Vonage');
-    }
-
-    if (!config.apiKey || !config.apiSecret) {
-      throw new Error('Credenciales Vonage requeridas');
-    }
-
-    const vonage = new Vonage({
-      apiKey: config.apiKey,
-      apiSecret: config.apiSecret,
-    });
-
-    
-      // Usar 'any' temporalmente para evitar problemas de tipos
-      const balance: any = await vonage.accounts.getBalance();
-      
-      // Depuración (puedes comentar estas líneas después)
-      this.logger.debug('DEBUG - Tipo de balance:', typeof balance);
-      this.logger.debug('DEBUG - Balance completo:', JSON.stringify(balance, null, 2));
-      
-       if (balance && typeof balance === 'object') {
-        if (balance.value !== undefined) {
-          return Number(balance.value) || 0;
-        }
-        if (balance.balance !== undefined) {
-          return Number(balance.balance) || 0;
-        }
-        if (balance.amount !== undefined) {
-          return Number(balance.amount) || 0;
-        }
-      }
-      
-      if (typeof balance === 'number') {
-        return balance;
-      }
-      
-      if (typeof balance === 'string') {
-        return parseFloat(balance) || 0;
-      }
-      
-      return 0;
-    } catch (error: any) {
-      this.logger.error(`Error obteniendo balance: ${error.message}`);
-      throw new Error(`No se pudo obtener balance: ${error.message}`);
-    }
-  }
-
- async testConnection(config?: SMSConfig): Promise<boolean> {
-    try {
-      await this.getBalance(config);
-      return true;
-    } catch (error: any) {
-      this.logger.error(`Error probando conexión SMS: ${error.message}`);
-      return false;
-    }
+    if (cleanNumber.startsWith('+')) return cleanNumber;
+    if (cleanNumber.startsWith('00')) return '+' + cleanNumber.substring(2);
+    if (cleanNumber.startsWith('0')) cleanNumber = cleanNumber.substring(1);
+    return '+' + defaultCountryCode + cleanNumber;
   }
 }

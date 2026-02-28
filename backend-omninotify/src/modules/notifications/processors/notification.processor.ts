@@ -430,37 +430,62 @@ export class NotificationProcessor extends WorkerHost {
   // SMS
   // ═══════════════════════════════════════════════════════════════
 
-  private async processSms(
-    data: ProcessedNotificationDto, // Usamos el tipo procesado
+    private async processSms(
+    data: ProcessedNotificationDto,
     job: Job,
   ): Promise<any> {
     this.logger.log(`📱 Procesando SMS para: ${data.recipient}`);
 
-    const companyConfig = await this.getCompanySmsConfig(data.companyId);
+    // 🔥 PASO 1: OBTENER CONFIGURACIÓN DEL PROVEEDOR DESDE LOS DATOS DEL JOB
+    // Buscar en variables si viene el proveedor seleccionado
+    const provider = data.variables?.provider || 'vonage'; // Por defecto vonage si no se especifica
+    
+    this.logger.log(`📱 Proveedor seleccionado: ${provider}`);
 
-    // El contenido ya viene procesado de processTemplateContent()
-    const text = data.content;
-
-    const smsConfig: SMSConfig = {
-      provider: companyConfig.provider || 'vonage',
-      apiKey: companyConfig.apiKey,
-      apiSecret: companyConfig.apiSecret,
-      fromNumber: companyConfig.fromNumber,
+    // 🔥 PASO 2: OBTENER CREDENCIALES SEGÚN EL PROVEEDOR
+    let smsConfig: SMSConfig = {
+      provider: provider as 'vonage' | 'twilio',
     };
 
-    const smsPayload: SMSContent = {
-      to: data.recipient,
-      text: text,
-      from: companyConfig.fromNumber,
-    };
+    try {
+      if (provider === 'vonage') {
+        const credentials = await this.systemConfigService.getVonageCredentials();
+        smsConfig.apiKey = credentials.apiKey;
+        smsConfig.apiSecret = credentials.apiSecret;
+        smsConfig.fromNumber = data.variables?.fromNumber || credentials.fromNumber;
+        this.logger.log('📦 Usando credenciales globales de Vonage');
+      } else if (provider === 'twilio') {
+        const credentials = await this.systemConfigService.getTwilioCredentials();
+        smsConfig.accountSid = credentials.accountSid;
+        smsConfig.authToken = credentials.authToken;
+        smsConfig.fromNumber = data.variables?.fromNumber || credentials.fromNumber;
+        this.logger.log('📦 Usando credenciales globales de Twilio');
+      }
 
-    const result = await this.smsProvider.send(smsConfig, smsPayload);
+      // 🔥 PASO 3: PREPARAR PAYLOAD
+      const text = data.content;
 
-    this.logger.log(`✅ SMS enviado a ${data.recipient}`);
+      const smsPayload: SMSContent = {
+        to: data.recipient,
+        text: text,
+        from: smsConfig.fromNumber,
+      };
 
-    return result;
+      // 🔥 PASO 4: ENVIAR
+      const result = await this.smsProvider.send(smsConfig, smsPayload);
+
+      this.logger.log(`✅ SMS enviado a ${data.recipient} vía ${provider}`);
+
+      return {
+        ...result,
+        provider,
+        recipient: data.recipient,
+      };
+    } catch (error: any) {
+      this.logger.error(`❌ Error enviando SMS vía ${provider}: ${error.message}`);
+      throw error;
+    }
   }
-
   // ═══════════════════════════════════════════════════════════════
   // CONFIG HELPERS
   // ═══════════════════════════════════════════════════════════════
@@ -522,18 +547,18 @@ export class NotificationProcessor extends WorkerHost {
     }
   }
 
-  private async getCompanySmsConfig(companyId: string): Promise<any> {
-    try {
-      const credentials = await this.systemConfigService.getVonageCredentials();
-      return {
-        provider: 'vonage',
-        apiKey: credentials.apiKey,
-        apiSecret: credentials.apiSecret,
-        fromNumber: credentials.fromNumber,
-        source: 'system_config',
-      };
-    } catch (error: any) {
-      throw new Error(`No se pudo obtener configuración SMS: ${error.message}`);
-    }
-  }
+  // private async getCompanySmsConfig(companyId: string): Promise<any> {
+  //   try {
+  //     const credentials = await this.systemConfigService.getVonageCredentials();
+  //     return {
+  //       provider: 'vonage',
+  //       apiKey: credentials.apiKey,
+  //       apiSecret: credentials.apiSecret,
+  //       fromNumber: credentials.fromNumber,
+  //       source: 'system_config',
+  //     };
+  //   } catch (error: any) {
+  //     throw new Error(`No se pudo obtener configuración SMS: ${error.message}`);
+  //   }
+  // }
 }
