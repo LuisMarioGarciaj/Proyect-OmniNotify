@@ -916,7 +916,7 @@ useEffect(() => {
                               accountSid: e.target.value,
                             })
                           }
-                          placeholder="AC8dd3e6fb783f8444c40b5c6b0e53a1e7"
+                          placeholder="Tu Account SID aquí"
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-colors pr-12"
                         />
                         <button
