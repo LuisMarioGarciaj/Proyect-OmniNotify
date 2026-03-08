@@ -1,240 +1,248 @@
-// src/services/credits.service.ts
+// frontend_omninitify/src/services/credits.service.ts
 import { api } from './api';
 
-export interface CreditsPackage {
-  id: string;
-  name: string;
+export interface BalanceResponse {
   credits: number;
-  price: number;
-  popular?: boolean;
-  description?: string;
-  isTest?: boolean;
-}
-
-export interface CreditsBalance {
-  currentBalance: number;
-  companyId: string;
-  lastUpdated: string;
-}
-
-// 🔥 CORREGIDO: Adaptado a la respuesta real del backend
-export interface QrResponse {
-  success: boolean;
-  qrData: {
-    status: number;
-    transactionId: string;
-    qrId: string;
-    qr: string;
-  };
-  companyId: string;
-  amount: number;
-  transactionCode: string;
-}
-
-export interface PaymentVerificationResponse {
-  status: 'PENDING' | 'SUCCESS' | 'FAILED';
-  paymentId?: string;
-  amount?: string;
-  credits?: {
-    success: boolean;
-    message: string;
-    newBalance: number;
-    transaction: any;
-  };
+  companyName: string;
 }
 
 export interface RechargeResponse {
-  success: boolean;
-  message: string;
-  transaction: any;
-  newBalance: number;
+  id: string;
+  transactionId: string;
+  qrId?: string;
+  qrCode?: string;
+  paymentUrl?: string;
+  amount: number;
+  credits: number;
+  expiresAt: string;
+  qrStatus: 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  paymentStatus: 'PENDING' | 'PAID' | 'EXPIRED' | 'FAILED';
 }
 
-export const creditsService = {
-  /**
-   * Obtiene el saldo actual de créditos
-   */
-  getBalance: async (companyId: string): Promise<CreditsBalance> => {
-    const response = await api.get(`/credits/balance?companyId=${companyId}`);
-    return response;
-  },
+export interface VerifyResponse {
+  id: string;
+  transactionId: string;
+  qrId?: string;
+  qrStatus: 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  paymentStatus: 'PENDING' | 'PAID' | 'EXPIRED' | 'FAILED';
+  paidAt?: string;
+  credits: number;
+  amount: number;
+}
+
+export interface RechargeHistoryResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  data: RechargeResponse[];
+}
+
+export interface PurchaseCreditsDto {
+  method: 'CARD' | 'QR' | 'STRIKE';
+  amount: number;
+  credits: number;
+  billName?: string;
+  billNit?: string;
+  email?: string;
+  concept?: string;
+}
+
+export interface GenerateQrDto {
+  amount: number;
+  credits: number;
+  billName?: string;
+  billNit?: string;
+  email?: string;
+  concept?: string;
+}
+
+export interface GenerateUrlDto {
+  amount: number;
+  credits: number;
+  billName?: string;
+  billNit?: string;
+  email?: string;
+  concept?: string;
+}
+
+export interface VerifyQrDto {
+  transactionId: string;
+  qrId: string;
+}
+
+export interface VerifyTransactionDto {
+  transactionId: string;
+}
+
+export interface ChannelCostResponse {
+  channel: 'EMAIL' | 'SMS' | 'WHATSAPP';
+  cost: number;
+}
+
+class CreditsService {
+  private readonly baseUrl = '/credits';
 
   /**
-   * Obtiene el historial de transacciones
+   * Obtener saldo actual de créditos para una empresa específica
+   * @param companyId ID de la empresa (obligatorio)
    */
-  getHistory: async (companyId: string, page: number = 1, perPage: number = 20) => {
-    const response = await api.get(`/credits/history?companyId=${companyId}&page=${page}&perPage=${perPage}`);
-    return response;
-  },
-
-  /**
-   * Genera código QR para pago
-   */
-  generateQr: async (data: {
-    companyId: string;
-    amount: number;
-    concept?: string;
-    email?: string;
-    billName?: string;
-  }): Promise<QrResponse> => {
-    console.log('📤 Enviando solicitud QR:', {
-      amount: data.amount,
-      concept: data.concept,
-      email: data.email,
-      billName: data.billName
-    });
-    
-    const response = await api.post('/credits/qr/generate', {
-      amount: data.amount,
-      concept: data.concept || 'Recarga de créditos',
-      email: data.email,
-      billName: data.billName,
-    });
-    
-    console.log('📥 Respuesta del servidor:', response);
-    
-    return response; // La respuesta ya tiene la estructura { success, qrData, ... }
-  },
-
-  /**
-   * Verifica estado del pago QR
-   */
-  verifyQrPayment: async (transactionId: string, qrId: string): Promise<PaymentVerificationResponse> => {
-    const response = await api.post('/credits/qr/verify', {
-      transactionId,
-      qrId,
-    });
-    return response;
-  },
-
-  /**
-   * Genera URL de pago (alternativa al QR)
-   */
-  generatePaymentUrl: async (data: {
-    companyId: string;
-    amount: number;
-    concept?: string;
-    email?: string;
-  }) => {
-    const response = await api.post('/credits/url/generate', {
-      amount: data.amount,
-      concept: data.concept,
-      email: data.email,
-    });
-    return response;
-  },
-
-  /**
-   * Recarga créditos (método legacy)
-   */
-  rechargeCredits: async (data: {
-    company_id: string;
-    package_id: string;
-    payment_method: 'card' | 'transfer' | 'qr';
-  }): Promise<RechargeResponse> => {
-    const packages = await creditsService.getCreditsPackages();
-    const selectedPackage = packages.find(p => p.id === data.package_id);
-    
-    if (!selectedPackage) {
-      throw new Error('Paquete no encontrado');
-    }
-
-    const response = await api.post('/credits/purchase', {
-      companyId: data.company_id,
-      amount: selectedPackage.credits,
-      paymentMethod: data.payment_method,
-      paymentId: `PAY-${Date.now()}`,
-      metadata: {
-        packageId: data.package_id,
-        packageName: selectedPackage.name,
-        isTest: selectedPackage.isTest || false
-      }
-    });
-
-    return response;
-  },
-
-  /**
-   * 🔥 MÉTODO ESPECIAL PARA PRUEBAS - Simula pago exitoso inmediato
-   */
-  simulateTestPayment: async (companyId: string, packageId: string): Promise<RechargeResponse> => {
-    const packages = await creditsService.getCreditsPackages();
-    const selectedPackage = packages.find(p => p.id === packageId);
-    
-    if (!selectedPackage) {
-      throw new Error('Paquete no encontrado');
-    }
-
-    // Usar endpoint de simulación
-    const response = await api.post('/credits/simulate-purchase', {
-      companyId,
-      amount: selectedPackage.credits
-    });
-
-    return response;
-  },
-
-  /**
-   * Obtiene los paquetes de créditos disponibles
-   */
-  getCreditsPackages: async (): Promise<CreditsPackage[]> => {
-    return [
-      // Paquetes económicos (1 Bs)
-      {
-        id: 'test-1',
-        name: '🧪 TEST - Mínimo',
-        credits: 2,
-        price: 1,
-        description: 'SOLO PARA PRUEBAS - 2 créditos por 1 Bs',
-        isTest: true
-      },
-      {
-        id: 'test-5',
-        name: '🧪 TEST - Pequeño',
-        credits: 10,
-        price: 1,
-        description: 'SOLO PARA PRUEBAS - 10 créditos por 1 Bs',
-        isTest: true
-      },
-      {
-        id: 'test-10',
-        name: '🧪 TEST - Mediano',
-        credits: 20,
-        price: 1,
-        description: 'SOLO PARA PRUEBAS - 20 créditos por 1 Bs',
-        isTest: true
-      },
+  async getBalance(companyId: string): Promise<BalanceResponse> {
+    try {
+      console.log('💰 CreditsService: Solicitando balance para companyId:', companyId);
       
-      // Paquetes reales
-      {
-        id: '1',
-        name: 'Básico',
-        credits: 100,
-        price: 50,
-        description: 'Para empezar - 100 créditos (0.50 Bs por crédito)'
-      },
-      {
-        id: '2',
-        name: 'Profesional',
-        credits: 500,
-        price: 200,
-        popular: true,
-        description: 'Para negocios en crecimiento - 500 créditos (0.40 Bs por crédito)'
-      },
-      {
-        id: '3',
-        name: 'Empresarial',
-        credits: 2000,
-        price: 750,
-        description: 'Para envíos masivos - 2000 créditos (0.375 Bs por crédito)'
-      },
-      {
-        id: '4',
-        name: 'Corporativo',
-        credits: 5000,
-        price: 1750,
-        description: 'Para grandes volúmenes - 5000 créditos (0.35 Bs por crédito)'
-      }
-    ];
+      const response = await api.get(`${this.baseUrl}/balance?companyId=${companyId}`);
+      
+      console.log('💰 CreditsService: Respuesta recibida:', response);
+      
+      return response as BalanceResponse;
+    } catch (error) {
+      console.error('❌ CreditsService: Error en getBalance:', error);
+      throw error;
+    }
   }
-};
+
+  /**
+   * Crear una nueva recarga de créditos (unificado)
+   */
+  async purchaseCredits(data: PurchaseCreditsDto): Promise<RechargeResponse> {
+    try {
+      console.log('💰 CreditsService: purchaseCredits - data:', data);
+      
+      // 🔥 VERIFICAR QUE ES UNA PETICIÓN POST
+      console.log('📡 Enviando POST a:', `${this.baseUrl}/purchase`);
+      
+      const response = await api.post(`${this.baseUrl}/purchase`, data);
+      
+      console.log('💰 CreditsService: purchaseCredits response:', response);
+      
+      return response as RechargeResponse;
+    } catch (error) {
+      console.error('❌ CreditsService: Error en purchaseCredits:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generar QR de pago (mantenido por compatibilidad)
+   */
+  async generateQr(data: GenerateQrDto): Promise<RechargeResponse> {
+    console.log('💰 CreditsService: generateQr - data:', data);
+    
+    const purchaseData: PurchaseCreditsDto = {
+      method: 'QR',
+      amount: data.amount,
+      credits: data.credits,
+      billName: data.billName,
+      billNit: data.billNit,
+      email: data.email,
+      concept: data.concept,
+    };
+    
+    return this.purchaseCredits(purchaseData);
+  }
+
+  /**
+   * Generar URL de pago con tarjeta (mantenido por compatibilidad)
+   */
+  async generateUrl(data: GenerateUrlDto): Promise<RechargeResponse> {
+    console.log('💰 CreditsService: generateUrl - data:', data);
+    
+    const purchaseData: PurchaseCreditsDto = {
+      method: 'CARD',
+      amount: data.amount,
+      credits: data.credits,
+      billName: data.billName,
+      billNit: data.billNit,
+      email: data.email,
+      concept: data.concept,
+    };
+    
+    return this.purchaseCredits(purchaseData);
+  }
+
+  /**
+   * Verificar estado de un pago por QR
+   */
+  async verifyQr(data: VerifyQrDto): Promise<VerifyResponse> {
+    try {
+      console.log('💰 CreditsService: verifyQr - data:', data);
+      
+      const response = await api.post(`${this.baseUrl}/verify-qr`, data);
+      
+      console.log('💰 CreditsService: verifyQr response:', response);
+      
+      return response as VerifyResponse;
+    } catch (error) {
+      console.error('❌ CreditsService: Error en verifyQr:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Verificar estado de una transferencia/pago con tarjeta
+   */
+  async verifyTransaction(data: VerifyTransactionDto): Promise<VerifyResponse> {
+    try {
+      console.log('💰 CreditsService: verifyTransaction - data:', data);
+      
+      const response = await api.post(`${this.baseUrl}/verify-transaction`, data);
+      
+      console.log('💰 CreditsService: verifyTransaction response:', response);
+      
+      return response as VerifyResponse;
+    } catch (error) {
+      console.error('❌ CreditsService: Error en verifyTransaction:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtener historial de recargas
+   */
+  async getRechargeHistory(limit: number = 20, offset: number = 0): Promise<RechargeHistoryResponse> {
+    try {
+      const response = await api.get(`${this.baseUrl}/history?limit=${limit}&offset=${offset}`);
+      console.log('💰 CreditsService: getRechargeHistory response:', response);
+      
+      return response as RechargeHistoryResponse;
+    } catch (error) {
+      console.error('❌ CreditsService: Error en getRechargeHistory:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtener costo por canal
+   */
+  async getChannelCost(channel: 'EMAIL' | 'SMS' | 'WHATSAPP'): Promise<ChannelCostResponse> {
+    try {
+      const response = await api.get(`${this.baseUrl}/channel-cost/${channel}`);
+      console.log(`💰 CreditsService: getChannelCost(${channel}) response:`, response);
+      
+      return response as ChannelCostResponse;
+    } catch (error) {
+      console.error(`❌ CreditsService: Error en getChannelCost(${channel}):`, error);
+      // Retornar valor por defecto en caso de error
+      return {
+        channel,
+        cost: channel === 'SMS' ? 2 : 1
+      };
+    }
+  }
+
+  /**
+   * Calcular créditos basado en monto (1 Bs = 1 crédito)
+   */
+  calculateCredits(amount: number): number {
+    return Math.floor(amount);
+  }
+
+  /**
+   * Calcular monto basado en créditos (1 crédito = 1 Bs)
+   */
+  calculateAmount(credits: number): number {
+    return credits;
+  }
+}
+
+export const creditsService = new CreditsService();

@@ -1,4 +1,4 @@
-// src/pages/Credits/RechargeCredits.tsx
+// frontend_omninitify/src/pages/Credits/RechargeCredits.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -17,10 +17,26 @@ import {
   X,
   AlertCircle,
   FlaskConical,
-  Sparkles
+  Sparkles,
+  Building,
+  User,
+  Mail,
+  FileText
 } from 'lucide-react';
 import { creditsService } from '../../services/credits.service';
-import type { CreditsPackage } from '../../services/credits.service';
+import type { RechargeResponse, VerifyResponse } from '../../services/credits.service';
+
+type PaymentMethod = 'QR' | 'CARD' | 'STRIKE';
+
+interface PackageOption {
+  id: string;
+  name: string;
+  credits: number;
+  amount: number;
+  popular?: boolean;
+  description?: string;
+  isTest?: boolean;
+}
 
 interface UserData {
   id: string;
@@ -31,23 +47,23 @@ interface UserData {
   credits?: number;
 }
 
-// 🔥 TIPOS CORREGIDOS PARA LA RESPUESTA DEL QR - BASADO EN LA RESPUESTA REAL DEL BACKEND
+// 🔥 TIPOS PARA LA RESPUESTA DEL QR
 interface QrResponse {
   success: boolean;
   qrData: {
-    status: number;           // 0 = éxito
-    transactionId: string;    // "667796"
-    qrId: string;            // "58610543"
-    qr: string;              // "iVBORw0KGgoAAAANSUhEUgAAAUAAAAF..."
+    status: number;
+    transactionId: string;
+    qrId: string;
+    qr: string;
   };
   companyId: string;
   amount: number;
   transactionCode: string;
-  [key: string]: any;      // Permitir propiedades adicionales
+  [key: string]: any;
 }
 
 interface PaymentVerificationResponse {
-  status: 'PENDING' | 'SUCCESS' | 'FAILED';  // Según el tipo en credits.service.ts
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
   paymentId?: string;
   amount?: string;
   credits?: {
@@ -58,18 +74,70 @@ interface PaymentVerificationResponse {
   };
 }
 
+const PACKAGE_OPTIONS: PackageOption[] = [
+  { 
+    id: 'test-1', 
+    name: 'Prueba', 
+    credits: 1, 
+    amount: 1, 
+    description: 'Para probar el sistema',
+    isTest: true 
+  },
+  { 
+    id: 'basic', 
+    name: 'Básico', 
+    credits: 50, 
+    amount: 50, 
+    description: 'Ideal para empezar' 
+  },
+  { 
+    id: 'standard', 
+    name: 'Estándar', 
+    credits: 200, 
+    amount: 200, 
+    popular: true, 
+    description: 'El más elegido' 
+  },
+  { 
+    id: 'premium', 
+    name: 'Premium', 
+    credits: 500, 
+    amount: 500, 
+    description: 'Para uso profesional' 
+  },
+  { 
+    id: 'business', 
+    name: 'Empresarial', 
+    credits: 1000, 
+    amount: 1000, 
+    description: 'Máximo rendimiento' 
+  },
+];
+
 const RechargeCredits: React.FC = () => {
   const navigate = useNavigate();
+  
   const [user, setUser] = useState<UserData | null>(null);
-  const [packages, setPackages] = useState<CreditsPackage[]>([]);
-  const [testPackages, setTestPackages] = useState<CreditsPackage[]>([]);
-  const [realPackages, setRealPackages] = useState<CreditsPackage[]>([]);
-  const [selectedPackage, setSelectedPackage] = useState<string>('');
-  const [loading, setLoading] = useState(false);
+  const [currentCredits, setCurrentCredits] = useState<number>(0);
+  const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'transfer' | 'qr'>('qr');
+  
+  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('QR');
+  const [selectedPackage, setSelectedPackage] = useState<string>('standard');
+  const [customAmount, setCustomAmount] = useState<string>('');
+  const [customCredits, setCustomCredits] = useState<string>('');
+  const [useCustom, setUseCustom] = useState(false);
   const [showTestMode, setShowTestMode] = useState(false);
+  
+  // Datos para factura
+  const [billData, setBillData] = useState({
+    billName: '',
+    billNit: '',
+    email: '',
+    concept: 'Recarga de créditos',
+  });
   
   // Estados para QR
   const [showQrModal, setShowQrModal] = useState(false);
@@ -78,66 +146,157 @@ const RechargeCredits: React.FC = () => {
   const [qrError, setQrError] = useState<string | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<'pending' | 'success' | 'failed'>('pending');
   const [verificationInterval, setVerificationInterval] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    // Obtener datos del usuario
-    const userData = localStorage.getItem('user_data');
-    if (userData) {
-      const parsed = JSON.parse(userData);
-      setUser(parsed);
-    } else {
-      navigate('/login');
+  // Obtener company_id del usuario logueado
+  const getCompanyId = (): string | null => {
+    if (user?.company_id) {
+      return user.company_id;
     }
+    const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
+    return userData.company_id || null;
+  };
 
-    // Cargar paquetes
-    loadPackages();
-  }, []);
-
-  // Limpiar intervalo cuando se desmonte el componente
+  // Cargar datos del usuario al montar
   useEffect(() => {
+    const storedUser = JSON.parse(localStorage.getItem('user_data') || '{}');
+    setUser(storedUser);
+    setCurrentCredits(storedUser.credits || 0);
+    
+    // Precargar datos para factura
+    setBillData(prev => ({
+      ...prev,
+      billName: storedUser.name || '',
+      email: storedUser.email || '',
+    }));
+    
+    loadBalance();
+    
     return () => {
       if (verificationInterval !== null) {
         clearInterval(verificationInterval);
       }
     };
-  }, [verificationInterval]);
+  }, []);
 
-  const loadPackages = async () => {
-    setLoading(true);
+  const loadBalance = async () => {
+    const companyId = getCompanyId();
+    if (!companyId) {
+      console.error('❌ No hay company_id disponible');
+      setLoading(false);
+      return;
+    }
+    
     try {
-      const data = await creditsService.getCreditsPackages();
-      setPackages(data);
+      console.log('💰 Cargando balance para empresa:', companyId);
+      const balance = await creditsService.getBalance(companyId);
+      console.log('✅ Balance cargado:', balance);
+      setCurrentCredits(balance.credits);
       
-      // Separar paquetes de prueba y reales
-      const test = data.filter(p => p.isTest);
-      const real = data.filter(p => !p.isTest);
+      // Actualizar localStorage
+      const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
+      userData.credits = balance.credits;
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      setUser(userData);
       
-      setTestPackages(test);
-      setRealPackages(real);
-      
-      // Seleccionar el primer paquete real por defecto
-      if (real.length > 0) {
-        setSelectedPackage(real[0].id);
-      }
     } catch (error) {
-      console.error('Error loading packages:', error);
+      console.error('❌ Error cargando balance:', error);
     } finally {
       setLoading(false);
     }
   };
 
+  // Actualizar créditos cuando cambia el monto custom
+  useEffect(() => {
+    if (useCustom && customAmount) {
+      const amount = parseFloat(customAmount);
+      if (!isNaN(amount) && amount > 0) {
+        const credits = creditsService.calculateCredits(amount);
+        setCustomCredits(credits.toString());
+      } else {
+        setCustomCredits('');
+      }
+    }
+  }, [customAmount, useCustom]);
+
+  // Actualizar monto cuando cambian los créditos custom
+  useEffect(() => {
+    if (useCustom && customCredits) {
+      const credits = parseInt(customCredits);
+      if (!isNaN(credits) && credits > 0) {
+        const amount = creditsService.calculateAmount(credits);
+        setCustomAmount(amount.toString());
+      } else {
+        setCustomAmount('');
+      }
+    }
+  }, [customCredits, useCustom]);
+
+  const handlePackageSelect = (pkgId: string) => {
+    setSelectedPackage(pkgId);
+    setUseCustom(false);
+    setCustomAmount('');
+    setCustomCredits('');
+  };
+
+  const handleCustomToggle = () => {
+    setUseCustom(!useCustom);
+    if (!useCustom) {
+      setCustomAmount('');
+      setCustomCredits('');
+    }
+  };
+
+  const getSelectedPackage = (): PackageOption | undefined => {
+    return PACKAGE_OPTIONS.find(p => p.id === selectedPackage);
+  };
+
+  const getAmount = (): number => {
+    if (useCustom) {
+      return parseFloat(customAmount) || 0;
+    }
+    const selectedPkg = getSelectedPackage();
+    return selectedPkg?.amount || 0;
+  };
+
+  const getCreditsAmount = (): number => {
+    if (useCustom) {
+      return parseInt(customCredits) || 0;
+    }
+    const selectedPkg = getSelectedPackage();
+    return selectedPkg?.credits || 0;
+  };
+
+  const validateForm = (): boolean => {
+    const amount = getAmount();
+    const credits = getCreditsAmount();
+    
+    if (amount <= 0 || credits <= 0) {
+      setQrError('Ingresa un monto válido');
+      return false;
+    }
+    
+    if (amount !== credits) {
+      setQrError('El monto y los créditos deben coincidir (1 Bs = 1 crédito)');
+      return false;
+    }
+    
+    return true;
+  };
+
   // 🔥 CORREGIDO: Manejar pago con QR con tipos correctos
   const handleQrPayment = async () => {
-    if (!selectedPackage || !user?.company_id) {
-      setQrError('No se pudo iniciar el pago: datos incompletos');
+    if (!validateForm()) return;
+    
+    const companyId = getCompanyId();
+    if (!companyId) {
+      setQrError('No se encontró el ID de la empresa');
       return;
     }
 
-    const selectedPkg = packages.find(p => p.id === selectedPackage);
-    if (!selectedPkg) {
-      setQrError('Paquete no encontrado');
-      return;
-    }
+    const amount = getAmount();
+    const credits = getCreditsAmount();
+    const selectedPkg = getSelectedPackage();
 
     setQrLoading(true);
     setShowQrModal(true);
@@ -146,18 +305,16 @@ const RechargeCredits: React.FC = () => {
 
     try {
       console.log('💰 Generando QR para recarga:', {
-        companyId: user.company_id,
-        amount: selectedPkg.price,
-        concept: `Recarga de ${selectedPkg.credits} créditos - ${selectedPkg.name}`
+        companyId,
+        amount,
+        concept: `Recarga de ${credits} créditos`
       });
 
-      // 1. Generar QR - LA RESPUESTA TIENE LA ESTRUCTURA { success, qrData, ... }
+      // Generar QR
       const response = await creditsService.generateQr({
-        companyId: user.company_id,
-        amount: selectedPkg.price,
-        concept: `Recarga de ${selectedPkg.credits} créditos - ${selectedPkg.name}`,
-        email: user.email,
-        billName: user.name
+        amount,
+        credits,
+        ...billData,
       });
 
       console.log('✅ Respuesta del backend:', response);
@@ -168,94 +325,77 @@ const RechargeCredits: React.FC = () => {
       }
 
       // 🔥 VERIFICAR QUE LA RESPUESTA TIENE LOS DATOS NECESARIOS
-      if (!response.success || !response.qrData || !response.qrData.qr) {
+      if (!response.qrCode) {
         console.error('❌ Respuesta sin QR:', response);
         throw new Error('El servidor no devolvió un código QR válido');
       }
 
-      // 🔥 EXTRAER LOS DATOS DEL QR DESDE qrData
-      const qrResponse = response.qrData;
-
-      // 🔥 CORREGIDO: Verificar que qr existe antes de usarlo
-      if (!qrResponse.qr) {
-        throw new Error('El código QR está vacío');
-      }
-
       // 🔥 CORREGIDO: Crear objeto QR con los datos correctos
-      const qrImage = qrResponse.qr.startsWith('data:image') 
-        ? qrResponse.qr 
-        : `data:image/png;base64,${qrResponse.qr}`;
+      const qrImage = response.qrCode.startsWith('data:image') 
+        ? response.qrCode 
+        : `data:image/png;base64,${response.qrCode}`;
 
-      // 🔥 CORREGIDO: Usar valores por defecto seguros
       setQrData({
-        qrId: qrResponse.qrId,
-        transactionId: qrResponse.transactionId,
+        qrId: response.qrId,
+        transactionId: response.transactionId,
         qrImage: qrImage,
-        amount: selectedPkg.price,
-        credits: selectedPkg.credits,
-        status: qrResponse.status === 0 ? 'SUCCESS' : 'PENDING'
+        amount: response.amount,
+        credits: response.credits,
       });
 
       console.log('✅ QR procesado correctamente');
 
       // 2. Empezar a verificar el pago cada 3 segundos
-      const transactionId = qrResponse.transactionId;
-      const qrId = qrResponse.qrId;
+      const transactionId = response.transactionId;
+      const qrId = response.qrId;
 
       const intervalId = window.setInterval(async () => {
         try {
-          const verification = await creditsService.verifyQrPayment(
-            transactionId,
-            qrId
-          );
+          if (selectedMethod === 'QR' && qrId) {
+            const result = await creditsService.verifyQr({
+              transactionId,
+              qrId,
+            });
 
-          console.log('🔍 Verificación:', verification);
+            console.log('🔍 Verificación:', result);
 
-          if (!verification) {
-            console.warn('⚠️ No se recibió respuesta de verificación');
-            return;
-          }
+            if (!result) {
+              console.warn('⚠️ No se recibió respuesta de verificación');
+              return;
+            }
 
-          // 🔥 CORREGIDO: Tipos correctos según PaymentVerificationResponse
-          if (verification.status === 'SUCCESS') {
-            clearInterval(intervalId);
-            setVerificationInterval(null);
-            setVerificationStatus('success');
-            
-            // 🔥 CORREGIDO: Extraer el nuevo balance
-            const newBalance = verification.credits?.newBalance;
-            
-            if (newBalance !== undefined && user) {
-              const updatedUser = { 
-                ...user, 
-                credits: newBalance 
-              };
-              localStorage.setItem('user_data', JSON.stringify(updatedUser));
-              setUser(updatedUser);
+            if (result.paymentStatus === 'PAID') {
+              clearInterval(intervalId);
+              setVerificationInterval(null);
+              setVerificationStatus('success');
               
-              window.dispatchEvent(new CustomEvent('credits-updated', { 
-                detail: { 
-                  companyId: user.company_id, 
-                  credits: newBalance 
+              // Recargar balance
+              await loadBalance();
+              
+              // Disparar evento de actualización de créditos
+              window.dispatchEvent(new CustomEvent('credits-updated', {
+                detail: {
+                  companyId,
+                  credits: currentCredits + credits,
                 }
               }));
+              
+              // Cerrar modal después de 3 segundos
+              setTimeout(() => {
+                setShowQrModal(false);
+                setSuccess(true);
+                setTimeout(() => setSuccess(false), 3000);
+              }, 3000);
+              
+            } else if (result.paymentStatus === 'EXPIRED' || result.paymentStatus === 'FAILED') {
+              clearInterval(intervalId);
+              setVerificationInterval(null);
+              setVerificationStatus('failed');
+              setQrError('El pago no pudo ser procesado');
+            } else {
+              // Estado 'PENDING' - seguir verificando
+              console.log('⏳ Pago pendiente...');
             }
-            
-            // Cerrar modal después de 3 segundos
-            setTimeout(() => {
-              setShowQrModal(false);
-              setSuccess(true);
-              setTimeout(() => setSuccess(false), 3000);
-            }, 3000);
-            
-          } else if (verification.status === 'FAILED') {
-            clearInterval(intervalId);
-            setVerificationInterval(null);
-            setVerificationStatus('failed');
-            setQrError('El pago no pudo ser procesado');
-          } else {
-            // Estado 'PENDING' - seguir verificando
-            console.log('⏳ Pago pendiente...');
           }
         } catch (error: any) {
           console.error('Error verifying payment:', error);
@@ -286,53 +426,21 @@ const RechargeCredits: React.FC = () => {
     setQrError(null);
   };
 
-  // Manejar recarga según método (ahora TODOS los paquetes usan QR)
-  const handleRecharge = () => {
-    const selectedPkg = packages.find(p => p.id === selectedPackage);
-    
-    if (!selectedPkg) return;
-    
-    // 🔥 TODOS los paquetes usan el mismo método QR (con cobro real)
-    handleQrPayment();
+  const handleCopyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  // Método legacy (para card/transfer)
-  const handleLegacyRecharge = async () => {
-    if (!selectedPackage || !user?.company_id) return;
-
-    setProcessing(true);
+  const formatDate = (dateString: string): string => {
     try {
-      const result = await creditsService.rechargeCredits({
-        company_id: user.company_id,
-        package_id: selectedPackage,
-        payment_method: paymentMethod
+      return new Date(dateString).toLocaleString('es-BO', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
       });
-
-      if (result.success) {
-        setSuccess(true);
-        
-        const updatedUser = { ...user, credits: result.newBalance };
-        localStorage.setItem('user_data', JSON.stringify(updatedUser));
-        setUser(updatedUser);
-        
-        window.dispatchEvent(new CustomEvent('credits-updated', { 
-          detail: { 
-            companyId: user.company_id, 
-            credits: result.newBalance 
-          }
-        }));
-
-        setTimeout(() => setSuccess(false), 3000);
-      }
-    } catch (error) {
-      console.error('Error processing recharge:', error);
-    } finally {
-      setProcessing(false);
+    } catch {
+      return dateString;
     }
-  };
-
-  const getSelectedPackageDetails = () => {
-    return packages.find(p => p.id === selectedPackage);
   };
 
   const formatPrice = (price: number) => {
@@ -343,26 +451,8 @@ const RechargeCredits: React.FC = () => {
     }).format(price);
   };
 
-  // 🔥 Función para recargar después del éxito
-  const reloadUserData = async () => {
-    if (!user?.company_id) return;
-    
-    try {
-      const balance = await creditsService.getBalance(user.company_id);
-      const updatedUser = { ...user, credits: balance.currentBalance };
-      localStorage.setItem('user_data', JSON.stringify(updatedUser));
-      setUser(updatedUser);
-      
-      window.dispatchEvent(new CustomEvent('credits-updated', { 
-        detail: { 
-          companyId: user.company_id, 
-          credits: balance.currentBalance 
-        }
-      }));
-    } catch (error) {
-      console.error('Error reloading user data:', error);
-    }
-  };
+  const testPackages = PACKAGE_OPTIONS.filter(p => p.isTest);
+  const realPackages = PACKAGE_OPTIONS.filter(p => !p.isTest);
 
   if (loading) {
     return (
@@ -378,7 +468,7 @@ const RechargeCredits: React.FC = () => {
     );
   }
 
-  const selectedPkg = getSelectedPackageDetails();
+  const selectedPkg = getSelectedPackage();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -402,8 +492,8 @@ const RechargeCredits: React.FC = () => {
           </div>
         </div>
 
-        {/* Current Credits - CON VALOR REAL */}
-        {user?.credits !== undefined && (
+        {/* Current Credits */}
+        {currentCredits > 0 && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border-l-4 border-blue-500">
             <div className="flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-4">
@@ -412,7 +502,7 @@ const RechargeCredits: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-sm text-gray-600 mb-1">Tus créditos actuales</p>
-                  <p className="text-3xl font-black text-gray-800">{user.credits.toLocaleString()}</p>
+                  <p className="text-3xl font-black text-gray-800">{currentCredits.toLocaleString()}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -445,7 +535,7 @@ const RechargeCredits: React.FC = () => {
           </button>
         </div>
 
-        {/* 🔥 PAQUETES DE PRUEBA - AHORA CON 1 Bs */}
+        {/* 🔥 PAQUETES DE PRUEBA */}
         {showTestMode && testPackages.length > 0 && (
           <>
             <h2 className="text-xl font-bold text-purple-800 mb-4 flex items-center gap-2">
@@ -459,7 +549,7 @@ const RechargeCredits: React.FC = () => {
                 return (
                   <div
                     key={pkg.id}
-                    onClick={() => setSelectedPackage(pkg.id)}
+                    onClick={() => handlePackageSelect(pkg.id)}
                     className={`relative bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl shadow-lg overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-2xl hover:scale-105 border-2 ${
                       isSelected ? 'border-purple-500 ring-4 ring-purple-200' : 'border-purple-200'
                     }`}
@@ -488,7 +578,7 @@ const RechargeCredits: React.FC = () => {
                       
                       <div className="text-center mb-4">
                         <span className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
-                          {formatPrice(pkg.price)}
+                          {formatPrice(pkg.amount)}
                         </span>
                       </div>
                       
@@ -496,7 +586,7 @@ const RechargeCredits: React.FC = () => {
                       
                       <div className="flex justify-between text-xs text-gray-500 px-2">
                         <span>Precio por crédito:</span>
-                        <span className="font-semibold">{(pkg.price / pkg.credits).toFixed(2)} Bs</span>
+                        <span className="font-semibold">{(pkg.amount / pkg.credits).toFixed(2)} Bs</span>
                       </div>
                       
                       {isSelected && (
@@ -520,12 +610,12 @@ const RechargeCredits: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {realPackages.map((pkg) => {
             const isSelected = selectedPackage === pkg.id;
-            const pricePerCredit = (pkg.price / pkg.credits).toFixed(2);
+            const pricePerCredit = (pkg.amount / pkg.credits).toFixed(2);
             
             return (
               <div
                 key={pkg.id}
-                onClick={() => setSelectedPackage(pkg.id)}
+                onClick={() => handlePackageSelect(pkg.id)}
                 className={`relative bg-white rounded-2xl shadow-lg overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-2xl hover:scale-105 ${
                   isSelected ? 'ring-4 ring-blue-500 ring-offset-2' : ''
                 }`}
@@ -540,23 +630,23 @@ const RechargeCredits: React.FC = () => {
                 )}
                 
                 <div className={`h-2 bg-gradient-to-r ${
-                  pkg.id === '1' ? 'from-blue-400 to-cyan-400' :
-                  pkg.id === '2' ? 'from-purple-400 to-pink-400' :
-                  pkg.id === '3' ? 'from-amber-400 to-orange-400' :
+                  pkg.id === 'basic' ? 'from-blue-400 to-cyan-400' :
+                  pkg.id === 'standard' ? 'from-purple-400 to-pink-400' :
+                  pkg.id === 'premium' ? 'from-amber-400 to-orange-400' :
                   'from-emerald-400 to-teal-400'
                 }`}></div>
                 
                 <div className="p-6">
                   <div className="flex items-center gap-3 mb-4">
                     <div className={`p-3 rounded-xl bg-gradient-to-br ${
-                      pkg.id === '1' ? 'from-blue-500 to-cyan-500' :
-                      pkg.id === '2' ? 'from-purple-500 to-pink-500' :
-                      pkg.id === '3' ? 'from-amber-500 to-orange-500' :
+                      pkg.id === 'basic' ? 'from-blue-500 to-cyan-500' :
+                      pkg.id === 'standard' ? 'from-purple-500 to-pink-500' :
+                      pkg.id === 'premium' ? 'from-amber-500 to-orange-500' :
                       'from-emerald-500 to-teal-500'
                     }`}>
-                      {pkg.id === '1' ? <Package className="w-6 h-6 text-white" /> :
-                       pkg.id === '2' ? <Zap className="w-6 h-6 text-white" /> :
-                       pkg.id === '3' ? <Gift className="w-6 h-6 text-white" /> :
+                      {pkg.id === 'basic' ? <Package className="w-6 h-6 text-white" /> :
+                       pkg.id === 'standard' ? <Zap className="w-6 h-6 text-white" /> :
+                       pkg.id === 'premium' ? <Gift className="w-6 h-6 text-white" /> :
                        <Star className="w-6 h-6 text-white" />}
                     </div>
                     <h3 className="text-xl font-bold text-gray-800">{pkg.name}</h3>
@@ -569,7 +659,7 @@ const RechargeCredits: React.FC = () => {
                   
                   <div className="text-center mb-4">
                     <span className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
-                      {formatPrice(pkg.price)}
+                      {formatPrice(pkg.amount)}
                     </span>
                   </div>
                   
@@ -591,7 +681,68 @@ const RechargeCredits: React.FC = () => {
           })}
         </div>
 
-        {/* Payment Methods (para TODOS los paquetes) */}
+        {/* Datos de factura (solo si hay paquete seleccionado) */}
+        {selectedPackage && (
+          <div className="bg-white rounded-xl border p-6 mb-8">
+            <h2 className="font-semibold text-gray-900 mb-4">Datos de Factura (Opcional)</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <User className="w-4 h-4 inline mr-1" />
+                  Nombre/Razón Social
+                </label>
+                <input
+                  type="text"
+                  value={billData.billName}
+                  onChange={(e) => setBillData({ ...billData, billName: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Tu nombre o empresa"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <Building className="w-4 h-4 inline mr-1" />
+                  NIT
+                </label>
+                <input
+                  type="text"
+                  value={billData.billNit}
+                  onChange={(e) => setBillData({ ...billData, billNit: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="123456789"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <Mail className="w-4 h-4 inline mr-1" />
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={billData.email}
+                  onChange={(e) => setBillData({ ...billData, email: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="tucorreo@ejemplo.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <FileText className="w-4 h-4 inline mr-1" />
+                  Concepto
+                </label>
+                <input
+                  type="text"
+                  value={billData.concept}
+                  onChange={(e) => setBillData({ ...billData, concept: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Recarga de créditos"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Payment Methods */}
         {selectedPackage && (
           <div className="bg-white rounded-2xl shadow-lg p-6 mb-8">
             <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -601,18 +752,18 @@ const RechargeCredits: React.FC = () => {
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button
-                onClick={() => setPaymentMethod('qr')}
+                onClick={() => setSelectedMethod('QR')}
                 className={`p-4 border-2 rounded-xl flex items-center gap-3 transition-all ${
-                  paymentMethod === 'qr' 
+                  selectedMethod === 'QR' 
                     ? 'border-blue-500 bg-blue-50' 
                     : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <div className={`p-2 rounded-lg ${
-                  paymentMethod === 'qr' ? 'bg-blue-500' : 'bg-gray-100'
+                  selectedMethod === 'QR' ? 'bg-blue-500' : 'bg-gray-100'
                 }`}>
                   <QrCode className={`w-5 h-5 ${
-                    paymentMethod === 'qr' ? 'text-white' : 'text-gray-600'
+                    selectedMethod === 'QR' ? 'text-white' : 'text-gray-600'
                   }`} />
                 </div>
                 <div className="text-left">
@@ -624,7 +775,7 @@ const RechargeCredits: React.FC = () => {
           </div>
         )}
 
-        {/* Summary and Confirm - AHORA TODOS LOS PAQUETES COBRAN */}
+        {/* Summary and Confirm */}
         {selectedPkg && (
           <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl shadow-xl p-6 text-white">
             <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -632,12 +783,12 @@ const RechargeCredits: React.FC = () => {
                 <p className="text-white/80 mb-2">Resumen de tu compra</p>
                 <div className="flex items-center gap-4 flex-wrap">
                   <div>
-                    <span className="text-2xl font-bold">{selectedPkg.credits}</span>
+                    <span className="text-2xl font-bold">{getCreditsAmount()}</span>
                     <span className="text-white/80 ml-2">créditos</span>
                   </div>
                   <div className="w-px h-8 bg-white/30 hidden sm:block"></div>
                   <div>
-                    <span className="text-2xl font-bold">{formatPrice(selectedPkg.price)}</span>
+                    <span className="text-2xl font-bold">{formatPrice(getAmount())}</span>
                   </div>
                 </div>
               </div>
@@ -649,7 +800,7 @@ const RechargeCredits: React.FC = () => {
                 </div>
                 
                 <button
-                  onClick={handleRecharge}
+                  onClick={handleQrPayment}
                   disabled={processing || qrLoading}
                   className="px-8 py-3 bg-white text-blue-600 rounded-xl font-bold hover:bg-white/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg"
                 >
@@ -661,7 +812,7 @@ const RechargeCredits: React.FC = () => {
                   ) : (
                     <>
                       <QrCode className="w-5 h-5" />
-                      Pagar {formatPrice(selectedPkg.price)}
+                      Pagar {formatPrice(getAmount())}
                     </>
                   )}
                 </button>
@@ -670,7 +821,7 @@ const RechargeCredits: React.FC = () => {
           </div>
         )}
 
-        {/* Modal de QR - CORREGIDO */}
+        {/* Modal de QR */}
         {showQrModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl max-w-md w-full p-6 relative">
@@ -719,12 +870,12 @@ const RechargeCredits: React.FC = () => {
                     <div className="flex justify-between mb-2">
                       <span className="text-gray-600">Monto a pagar:</span>
                       <span className="font-bold text-blue-600">
-                        {formatPrice(qrData.amount || selectedPkg?.price || 0)}
+                        {formatPrice(qrData.amount || getAmount())}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">Créditos a recibir:</span>
-                      <span className="font-bold text-blue-600">{qrData.credits || selectedPkg?.credits}</span>
+                      <span className="font-bold text-blue-600">{qrData.credits || getCreditsAmount()}</span>
                     </div>
                   </div>
                   
@@ -745,7 +896,7 @@ const RechargeCredits: React.FC = () => {
                   </div>
                   <h3 className="text-xl font-bold text-gray-900 mb-2">¡Pago exitoso!</h3>
                   <p className="text-gray-600 mb-4">
-                    Se han agregado {qrData?.credits || selectedPkg?.credits} créditos a tu cuenta
+                    Se han agregado {qrData?.credits || getCreditsAmount()} créditos a tu cuenta
                   </p>
                   <p className="text-sm text-gray-500">
                     Redirigiendo...

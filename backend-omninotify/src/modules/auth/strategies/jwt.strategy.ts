@@ -1,3 +1,4 @@
+// backend-omninotify/src/modules/auth/strategies/jwt.strategy.ts
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -18,10 +19,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new Error('Token expired');
     }
     console.log('🔍 JWT Payload recibido:', payload);
+    
+    // 🔥 IMPORTANTE: Devolver con AMBAS propiedades para compatibilidad
     return {
       id: payload.sub,
       email: payload.email,
-      companyId: payload.companyId,
+      companyId: payload.companyId,      // Para compatibilidad con código que usa companyId
+      company_id: payload.companyId,     // Para compatibilidad con código que usa company_id
       role: payload.role,
     };
   }  

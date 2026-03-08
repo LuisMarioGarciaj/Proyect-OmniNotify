@@ -1,8 +1,8 @@
-// src/components/Header.tsx
+// frontend_omninitify/src/components/Header.tsx
 import React, { useState, useEffect } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Coins, CreditCard, Loader2, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../services/api'; // 👈 IMPORTANTE: Importar api
+import { creditsService } from '../services/credits.service';
 
 interface UserData {
   id: string;
@@ -10,7 +10,9 @@ interface UserData {
   name: string;
   role: string;
   company_id: string;
+  company_name?: string;
   credits?: number;
+  whatsapp_configured?: boolean;
 }
 
 interface HeaderProps {
@@ -18,7 +20,7 @@ interface HeaderProps {
   title: string;
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
-  onCreditsUpdate?: (credits: number) => void; // Callback opcional
+  onCreditsUpdate?: (credits: number) => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ 
@@ -33,30 +35,53 @@ const Header: React.FC<HeaderProps> = ({
   const [loadingCredits, setLoadingCredits] = useState(false);
   const [showCreditsTooltip, setShowCreditsTooltip] = useState(false);
 
-  // 🔥 Función para cargar créditos desde el backend
+  // Obtener company_id del usuario logueado
+  const getCompanyId = (): string | null => {
+    // Prioridad 1: Del prop user
+    if (user?.company_id) {
+      return user.company_id;
+    }
+    // Prioridad 2: Del localStorage
+    const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
+    if (userData.company_id) {
+      return userData.company_id;
+    }
+    return null;
+  };
+
+  // 🔥 Cargar créditos desde el backend
   const loadCredits = async () => {
-    if (!user?.company_id) return;
+    const companyId = getCompanyId();
+    if (!companyId) {
+      console.log('⚠️ Header: No hay company_id disponible');
+      return;
+    }
     
     setLoadingCredits(true);
     try {
-      console.log('💰 Header: Cargando créditos para empresa:', user.company_id);
-      const response = await api.get(`/credits/balance?companyId=${user.company_id}`);
-      console.log('✅ Header: Créditos cargados:', response.data);
+      console.log('💰 Header: Cargando créditos para empresa:', companyId);
       
-      const newCredits = response.data.currentBalance;
-      setCredits(newCredits);
+      const balance = await creditsService.getBalance(companyId);
+      console.log('✅ Header: Créditos cargados:', balance);
       
-      // Actualizar localStorage y userData
+      setCredits(balance.credits);
+      
+      // Actualizar localStorage
       const userData = JSON.parse(localStorage.getItem('user_data') || '{}');
-      userData.credits = newCredits;
+      userData.credits = balance.credits;
       localStorage.setItem('user_data', JSON.stringify(userData));
       
-      // Notificar al componente padre si hay callback
       if (onCreditsUpdate) {
-        onCreditsUpdate(newCredits);
+        onCreditsUpdate(balance.credits);
       }
     } catch (error) {
       console.error('❌ Header: Error cargando créditos:', error);
+      
+      // Fallback: usar créditos del usuario si existen
+      if (user?.credits !== undefined) {
+        console.log('📦 Header: Usando créditos del usuario:', user.credits);
+        setCredits(user.credits);
+      }
     } finally {
       setLoadingCredits(false);
     }
@@ -65,18 +90,14 @@ const Header: React.FC<HeaderProps> = ({
   // Cargar créditos al montar y cuando cambie el usuario
   useEffect(() => {
     loadCredits();
-    
-    // También intentar cargar desde localStorage como fallback
-    if (user?.credits !== undefined) {
-      setCredits(user.credits);
-    }
   }, [user?.company_id]);
 
   // Escuchar evento de actualización de créditos
   useEffect(() => {
     const handleCreditsUpdate = (event: CustomEvent) => {
       console.log('💰 Header: Evento credits-updated recibido:', event.detail);
-      if (event.detail.companyId === user?.company_id) {
+      const companyId = getCompanyId();
+      if (companyId && event.detail.companyId === companyId) {
         setCredits(event.detail.credits);
         
         // Actualizar localStorage
@@ -84,7 +105,6 @@ const Header: React.FC<HeaderProps> = ({
         userData.credits = event.detail.credits;
         localStorage.setItem('user_data', JSON.stringify(userData));
         
-        // Notificar al padre
         if (onCreditsUpdate) {
           onCreditsUpdate(event.detail.credits);
         }
@@ -96,10 +116,14 @@ const Header: React.FC<HeaderProps> = ({
     return () => {
       window.removeEventListener('credits-updated' as any, handleCreditsUpdate);
     };
-  }, [user?.company_id]);
+  }, []);
 
   const handleRecharge = () => {
     navigate('/credits/recharge');
+  };
+
+  const handleRefreshCredits = () => {
+    loadCredits();
   };
 
   const getCreditsColor = () => {
@@ -140,7 +164,7 @@ const Header: React.FC<HeaderProps> = ({
           
           {/* Right section with credits, notifications and profile */}
           <div className="flex items-center justify-end w-full sm:w-auto gap-3">
-            {/* Credits Display - Versión mejorada */}
+            {/* Credits Display */}
             <div className="relative group">
               <button
                 onClick={handleRecharge}
@@ -166,7 +190,7 @@ const Header: React.FC<HeaderProps> = ({
                 <CreditCard size={16} className="opacity-60 group-hover:opacity-100 transition-opacity" />
               </button>
               
-              {/* Tooltip mejorado */}
+              {/* Tooltip */}
               {showCreditsTooltip && (
                 <div className="absolute right-0 top-full mt-2 w-48 bg-gray-900 text-white rounded-xl shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
                   <div className="absolute -top-1 right-6 w-2 h-2 bg-gray-900 transform rotate-45"></div>
@@ -178,7 +202,7 @@ const Header: React.FC<HeaderProps> = ({
                     Usa tus créditos para enviar notificaciones
                   </p>
                   <div className="bg-gray-800 rounded-lg p-2 text-xs">
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center mb-2">
                       <span className="text-gray-400">Disponibles:</span>
                       <span className={`font-bold ${
                         credits <= 50 ? 'text-red-400' : credits <= 200 ? 'text-yellow-400' : 'text-green-400'
@@ -186,10 +210,23 @@ const Header: React.FC<HeaderProps> = ({
                         {credits.toLocaleString()}
                       </span>
                     </div>
+                    <button 
+                      onClick={handleRefreshCredits}
+                      className="w-full mb-2 bg-gray-700 text-white text-xs font-medium py-1.5 rounded-lg hover:bg-gray-600 transition-all flex items-center justify-center gap-1"
+                    >
+                      {loadingCredits ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          Actualizando...
+                        </>
+                      ) : (
+                        'Actualizar saldo'
+                      )}
+                    </button>
                   </div>
                   <button 
                     onClick={handleRecharge}
-                    className="w-full mt-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-xs font-medium py-2 rounded-lg hover:from-blue-600 hover:to-indigo-600 transition-all"
+                    className="w-full mt-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-xs font-medium py-2 rounded-lg hover:from-blue-600 hover:to-indigo-600 transition-all"
                   >
                     Recargar Ahora
                   </button>

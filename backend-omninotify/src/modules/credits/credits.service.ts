@@ -1,555 +1,691 @@
-// src/modules/credits/credits.service.ts
-import {
-  Injectable,
-  BadRequestException,
-  NotFoundException,
-  Inject,
-  forwardRef,
-  HttpException,
-  HttpStatus,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, QueryRunner } from 'typeorm';
-import { v4 as uuidv4 } from 'uuid';
+import { Repository, DataSource, LessThan } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-
-import { CreditTransaction, CreditTransactionType, NotificationChannel } from './entities/credit-transaction.entity';
+import { v4 as uuidv4 } from 'uuid';
+import { ConfigService } from '@nestjs/config';
+import { Cron } from '@nestjs/schedule';
 import { Company } from '../companies/entities/company.entity';
-import { PurchaseCreditsDto } from './dto/purchase-credits.dto';
-import { SimulatePurchaseDto } from './dto/simulate-purchase.dto';
-import { SimulateDeductionDto } from './dto/simulate-deduction.dto';
-import { 
-  CreditBalanceResponseDto,
-  CreditHistoryResponseDto, 
-  PurchaseCreditsResponseDto,
-  CreditTransactionResponseDto 
-} from './dto/credit-response.dto';
-import { NotificationsService } from '../notifications/notifications.service';
-import { GenerateQrDto } from './dto/generate-qr.dto';
+import { CreditTransaction, TransactionType, NotificationChannel } from './entities/credit-transaction.entity';
+import { CreditRecharge, PayMethod, QrStatus, PaymentStatus } from './entities/credit-recharge.entity';
+import { ChannelCost, Channel } from './entities/channel-cost.entity';
+import { PurchaseCreditsDto, PurchaseMethod } from './dto/purchase-credits.dto';
 import { VerifyQrDto } from './dto/verify-qr.dto';
-import { GenerateUrlDto } from './dto/generate-url.dto';
+import { VerifyTransactionDto } from './dto/verify-transaction.dto';
 
 @Injectable()
 export class CreditsService {
   private readonly logger = new Logger(CreditsService.name);
-  
-  // Costos por canal (constante compartida)
-  private readonly CHANNEL_COSTS = {
-    EMAIL: 1,
-    SMS: 2,
-    WHATSAPP: 1,
-  };
+  private readonly yopagoApiUrl: string;
+  private readonly successUrl: string;
+  private readonly failedUrl: string;
 
-  // Configuración de YOPAGO (del archivo de Postman)
-  private readonly YOPAGO_CONFIG = {
-    baseUrl: 'https://yopago.com.bo',
-    companyCode: 'WU59-YZ4B-BCP2-M38Y', // Código de empresa en YOPAGO
-    corsUrl: 'https://yopago.nexoss.pro/api/yopago-handle-generate-qr', // Para CORS
+  // Mapeo de códigos de empresa según el ID de compañía
+  private readonly companyCodeMap: Record<string, string> = {
+    '25a63d10-eff4-11f0-86e6-a2aaf909b30d': 'WU59-YZ4B-BCP2-M38Y',
+    'ad8492bf-f367-11f0-86e6-a2aaf909b30d': 'ZZRR-NX33-53RE-FLY2',
   };
 
   constructor(
-    @InjectRepository(CreditTransaction)
-    private creditTransactionRepository: Repository<CreditTransaction>,
-    
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
-    
-    private readonly dataSource: DataSource,
-    private readonly httpService: HttpService,
-    
-    @Inject(forwardRef(() => NotificationsService))
-    private notificationsService: NotificationsService,
-  ) {}
-
-  /**
-   * Convierte una entidad CreditTransaction a CreditTransactionResponseDto
-   */
-  private toTransactionResponse(transaction: CreditTransaction): CreditTransactionResponseDto {
-    return {
-      id: transaction.id,
-      type: transaction.type,
-      amount: transaction.amount,
-      balanceBefore: transaction.balanceBefore,
-      balanceAfter: transaction.balanceAfter,
-      channel: transaction.channel,
-      description: transaction.description,
-      createdAt: transaction.createdAt.toISOString(),
-      metadata: transaction.metadata,
-    };
+    @InjectRepository(CreditTransaction)
+    private transactionRepository: Repository<CreditTransaction>,
+    @InjectRepository(CreditRecharge)
+    private rechargeRepository: Repository<CreditRecharge>,
+    @InjectRepository(ChannelCost)
+    private channelCostRepository: Repository<ChannelCost>,
+    private httpService: HttpService,
+    private configService: ConfigService,
+    private dataSource: DataSource,
+  ) {
+    this.yopagoApiUrl = this.configService.get('YOPAGO_API_URL', 'https://yopago.com.bo');
+    this.successUrl = this.configService.get('YOPAGO_SUCCESS_URL', 'https://exito.com.bo');
+    this.failedUrl = this.configService.get('YOPAGO_FAILED_URL', 'https://falla.com.bo');
   }
 
   /**
-   * Obtiene el saldo actual de créditos de una empresa
+   * Obtener el código de empresa de Yopago para una compañía
    */
-  async getBalance(companyId: string): Promise<CreditBalanceResponseDto> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
+  private getCompanyCode(companyId: string): string {
+    console.log('🔍 getCompanyCode - companyId recibido:', companyId);
+    
+    if (!companyId) {
+      this.logger.error('❌ companyId es undefined en getCompanyCode');
+      return 'WU59-YZ4B-BCP2-M38Y'; // Código por defecto
+    }
+    
+    if (companyId === 'undefined' || companyId === 'null') {
+      this.logger.error(`❌ companyId es el string "${companyId}" en getCompanyCode`);
+      return 'WU59-YZ4B-BCP2-M38Y'; // Código por defecto
+    }
+    
+    const code = this.companyCodeMap[companyId];
+    if (!code) {
+      this.logger.warn(`No se encontró código de empresa para companyId: ${companyId}, usando código por defecto`);
+      return 'WU59-YZ4B-BCP2-M38Y'; // Código por defecto
+    }
+    return code;
+  }
+
+  /**
+   * Calcular créditos basado en el monto (1 Bs = 1 crédito)
+   */
+  private calculateCredits(amount: number): number {
+    return Math.floor(amount);
+  }
+
+  /**
+   * Generar un nuevo código de transacción único
+   */
+  private generateTransactionCode(): string {
+    return Math.floor(Math.random() * 1000000).toString();
+  }
+
+  /**
+   * Obtener saldo actual de una empresa
+   */
+  async getBalance(companyId: string): Promise<{ credits: number; companyName: string }> {
+    console.log('💰 CreditsService.getBalance - companyId:', companyId);
+    
+    const company = await this.companyRepository.findOne({ 
+      where: { id: companyId } 
+    });
+    
+    if (!company) {
+      console.error('❌ Empresa no encontrada:', companyId);
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    console.log('✅ Empresa encontrada:', {
+      id: company.id,
+      name: company.name,
+      current_credits: company.current_credits
     });
 
-    if (!company) {
-      throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
-    }
-
-    return {
-      currentBalance: company.current_credits || 0,
-      companyId,
-      lastUpdated: new Date().toISOString(),
+    const result = {
+      credits: company.current_credits || 0,
+      companyName: company.name || 'Mi Empresa',
     };
+    
+    console.log('📡 Enviando respuesta:', result);
+    return result;
   }
 
   /**
-   * Obtiene el saldo como número (para uso interno)
+   * Crear una recarga (QR o URL de pago)
    */
-  async getBalanceNumber(companyId: string): Promise<number> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-    });
-
+  async createRecharge(companyId: string, purchaseDto: PurchaseCreditsDto): Promise<any> {
+    console.log('💰 CreditsService.createRecharge - companyId:', companyId);
+    console.log('📦 purchaseDto:', purchaseDto);
+    
+    const company = await this.companyRepository.findOne({ where: { id: companyId } });
     if (!company) {
-      throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
+      console.error('❌ Empresa no encontrada:', companyId);
+      throw new NotFoundException('Empresa no encontrada');
     }
 
-    return company.current_credits || 0;
-  }
+    const companyCode = this.getCompanyCode(companyId);
+    const codeTransaction = this.generateTransactionCode();
+    const credits = purchaseDto.credits || this.calculateCredits(purchaseDto.amount);
 
-  /**
-   * Obtiene el historial de transacciones con paginación
-   */
-  async getHistory(
-    companyId: string,
-    page: number = 1,
-    perPage: number = 20,
-  ): Promise<CreditHistoryResponseDto> {
-    const [transactions, total] = await this.creditTransactionRepository
-      .createQueryBuilder('ct')
-      .where('ct.companyId = :companyId', { companyId })
-      .orderBy('ct.createdAt', 'DESC')
-      .skip((page - 1) * perPage)
-      .take(perPage)
-      .getManyAndCount();
+    // Crear registro de recarga
+    const recharge = new CreditRecharge();
+    recharge.id = uuidv4();
+    recharge.companyId = companyId;
+    recharge.paymethod = purchaseDto.method as unknown as PayMethod;
+    recharge.transactionId = codeTransaction;
+    recharge.companyCode = companyCode;
+    recharge.amount = purchaseDto.amount;
+    recharge.credits = credits;
+    recharge.qrStatus = QrStatus.PENDING;
+    recharge.paymentStatus = PaymentStatus.PENDING;
+    
+    // Fecha de expiración: 1 día después
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 1);
+    recharge.expiresAt = expiresAt;
 
-    const balance = await this.getBalance(companyId);
-
-    const transactionDtos = transactions.map(tx => this.toTransactionResponse(tx));
-
-    return {
-      transactions: transactionDtos,
-      total,
-      page,
-      perPage,
-      currentBalance: balance.currentBalance,
-    };
-  }
-
-  /**
-   * Verifica si hay créditos suficientes para un canal
-   */
-  async hasEnoughCredits(companyId: string, channel: 'EMAIL' | 'SMS' | 'WHATSAPP'): Promise<boolean> {
-    const requiredCredits = this.CHANNEL_COSTS[channel] || 1;
-    const currentBalance = await this.getBalanceNumber(companyId);
-    return currentBalance >= requiredCredits;
-  }
-
-  /**
-   * Descuenta créditos de una empresa (usado por NotificationProcessor)
-   */
-  async deductCredits(
-    companyId: string,
-    channel: 'EMAIL' | 'SMS' | 'WHATSAPP',
-    recipient: string,
-    referenceId?: string,
-    queryRunner?: QueryRunner,
-  ): Promise<PurchaseCreditsResponseDto> {
-    const requiredCredits = this.CHANNEL_COSTS[channel] || 1;
-
-    const useQueryRunner = queryRunner || this.dataSource.createQueryRunner();
-    let shouldRelease = false;
-
-    if (!queryRunner) {
-      await useQueryRunner.connect();
-      await useQueryRunner.startTransaction();
-      shouldRelease = true;
-    }
+    let yopagoResponse: any;
 
     try {
-      const company = await useQueryRunner.manager
-        .createQueryBuilder(Company, 'company')
-        .setLock('pessimistic_write')
-        .where('company.id = :id', { id: companyId })
-        .getOne();
+      if (purchaseDto.method === PurchaseMethod.QR) {
+        // Generar QR con Yopago
+        const qrRequest = {
+          companyCode,
+          codeTransaction,
+          urlSuccess: this.successUrl,
+          urlFailed: this.failedUrl,
+          billName: purchaseDto.billName || company.name,
+          billNit: purchaseDto.billNit || '0',
+          email: purchaseDto.email || 'cliente@example.com',
+          generateBill: purchaseDto.billNit ? '1' : '0',
+          concept: purchaseDto.concept || 'Recarga de créditos',
+          currency: 'BOB' as const,
+          amount: purchaseDto.amount.toString(),
+          messagePayment: 'Gracias por tu compra',
+          codeExternal: '',
+        };
 
-      if (!company) {
-        throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
-      }
+        console.log('📤 Enviando solicitud a Yopago (QR):', qrRequest);
 
-      const currentBalance = company.current_credits || 0;
-
-      if (currentBalance < requiredCredits) {
-        throw new BadRequestException(
-          `Créditos insuficientes. Balance actual: ${currentBalance}, requeridos: ${requiredCredits}`,
+        const response = await firstValueFrom(
+          this.httpService.post(
+            `${this.yopagoApiUrl}/pay/qr/generateQr`,
+            qrRequest
+          )
         );
+
+        console.log('📥 Respuesta de Yopago:', response.data);
+
+        // Yopago devuelve status: 0 para éxito
+        if (response.data.status !== 0) {
+          throw new BadRequestException(response.data.message || 'Error al generar QR');
+        }
+
+        yopagoResponse = response.data;
+        recharge.transactionId = yopagoResponse.transactionId;
+        recharge.qrId = yopagoResponse.qrId;
+        
+        console.log('✅ QR generado exitosamente:', { 
+          transactionId: yopagoResponse.transactionId, 
+          qrId: yopagoResponse.qrId 
+        });
+        
+      } else if (purchaseDto.method === PurchaseMethod.CARD) {
+        // Generar URL de pago con tarjeta
+        const urlRequest = {
+          companyCode,
+          codeTransaction,
+          urlSuccess: this.successUrl,
+          urlFailed: this.failedUrl,
+          billName: purchaseDto.billName || company.name,
+          billNit: purchaseDto.billNit || '0',
+          email: purchaseDto.email || 'cliente@example.com',
+          generateBill: purchaseDto.billNit ? '1' : '0',
+          concept: purchaseDto.concept || 'Recarga de créditos',
+          currency: 'BOB' as const,
+          amount: purchaseDto.amount.toString(),
+          messagePayment: 'Gracias por tu compra',
+          codeExternal: '',
+        };
+
+        console.log('📤 Enviando solicitud a Yopago (URL):', urlRequest);
+
+        const response = await firstValueFrom(
+          this.httpService.post(
+            `${this.yopagoApiUrl}/pay/api/generateUrl`,
+            urlRequest
+          )
+        );
+
+        console.log('📥 Respuesta de Yopago:', response.data);
+
+        // Yopago devuelve status: 0 para éxito
+        if (response.data.status !== 0) {
+          throw new BadRequestException(response.data.message || 'Error al generar URL de pago');
+        }
+
+        yopagoResponse = response.data;
+        recharge.transactionId = yopagoResponse.transactionId;
+      } else {
+        throw new BadRequestException('Método de pago no soportado');
       }
 
-      const newBalance = currentBalance - requiredCredits;
+      // Guardar la recarga
+      await this.rechargeRepository.save(recharge);
 
-      await useQueryRunner.manager.update(
-        Company,
-        { id: companyId },
-        { current_credits: newBalance },
-      );
+      // Devolver respuesta según método
+      if (purchaseDto.method === PurchaseMethod.QR) {
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          qrId: recharge.qrId,
+          qrCode: yopagoResponse?.qr,
+          amount: recharge.amount,
+          credits: recharge.credits,
+          expiresAt: recharge.expiresAt,
+          qrStatus: recharge.qrStatus,
+          paymentStatus: recharge.paymentStatus,
+        };
+      } else {
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          paymentUrl: yopagoResponse?.paymentUrl,
+          amount: recharge.amount,
+          credits: recharge.credits,
+          expiresAt: recharge.expiresAt,
+          paymentStatus: recharge.paymentStatus,
+        };
+      }
+    } catch (error) {
+      console.error('❌ Error al crear recarga:', error);
+      throw new InternalServerErrorException('Error al procesar la solicitud de pago');
+    }
+  }
 
-      const transaction = this.creditTransactionRepository.create({
-        id: uuidv4(),
+  /**
+   * Verificar el estado de una recarga (QR)
+   */
+  async verifyQrRecharge(companyId: string, verifyDto: VerifyQrDto): Promise<any> {
+    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    if (!company) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    // Buscar la recarga
+    const recharge = await this.rechargeRepository.findOne({
+      where: {
+        transactionId: verifyDto.transactionId,
         companyId: companyId,
-        type: CreditTransactionType.DEDUCTION,
-        amount: -requiredCredits,
-        balanceBefore: currentBalance,
-        balanceAfter: newBalance,
-        channel: channel as NotificationChannel,
-        referenceId: referenceId,
-        description: `Envío de ${channel} a ${recipient}`,
-        metadata: {
-          recipient,
-          channel,
-          timestamp: new Date().toISOString(),
-        },
-      });
+        paymethod: PayMethod.QR,
+      },
+    });
 
-      const savedTransaction = await useQueryRunner.manager.save(transaction);
-
-      if (!queryRunner && shouldRelease) {
-        await useQueryRunner.commitTransaction();
-      }
-
-      return {
-        success: true,
-        message: `${requiredCredits} crédito(s) descontado(s) por envío de ${channel}`,
-        transaction: this.toTransactionResponse(savedTransaction),
-        newBalance,
-      };
-    } catch (error) {
-      if (!queryRunner && shouldRelease) {
-        await useQueryRunner.rollbackTransaction();
-      }
-      throw error;
-    } finally {
-      if (!queryRunner && shouldRelease) {
-        await useQueryRunner.release();
-      }
+    if (!recharge) {
+      throw new NotFoundException('Recarga no encontrada');
     }
-  }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // 🪙 COMPRA DE CRÉDITOS CON QR (INTEGRACIÓN CON YOPAGO)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  /**
-   * Genera un código QR para pago
-   */
-  async generateQr(
-    companyId: string,
-    qrDto: GenerateQrDto,
-  ): Promise<any> {
-    try {
-      this.logger.log(`🪙 Generando QR para empresa ${companyId}, monto: ${qrDto.amount}`);
-
-      const company = await this.companyRepository.findOne({
-        where: { id: companyId },
-      });
-
-      if (!company) {
-        throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
-      }
-
-      // Preparar payload para YOPAGO
-      const payload = {
-        companyCode: this.YOPAGO_CONFIG.companyCode,
-        codeTransaction: qrDto.codeTransaction || `TRX-${Date.now()}`,
-        urlSuccess: qrDto.urlSuccess || 'https://omninotify.com/pago-exitoso',
-        urlFailed: qrDto.urlFailed || 'https://omninotify.com/pago-fallido',
-        billName: qrDto.billName || company.name,
-        billNit: qrDto.billNit || '123456789',
-        email: qrDto.email || 'cliente@ejemplo.com',
-        generateBill: qrDto.generateBill || '1',
-        concept: qrDto.concept || `Recarga de créditos - ${company.name}`,
-        currency: qrDto.currency || 'BOB',
-        amount: qrDto.amount.toString(),
-        messagePayment: qrDto.messagePayment || 'Gracias por tu compra',
-        codeExternal: qrDto.codeExternal || '',
-      };
-
-      // Llamar a la API de YOPAGO
-      const response = await firstValueFrom(
-        this.httpService.post(`${this.YOPAGO_CONFIG.baseUrl}/pay/qr/generateQr`, payload, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }),
-      );
-
-      this.logger.log(`✅ QR generado exitosamente: ${JSON.stringify(response.data)}`);
-
-      // Guardar metadata para verificación posterior
+    // Si ya está pagada, no volver a verificar
+    if (recharge.paymentStatus === PaymentStatus.PAID) {
       return {
-        success: true,
-        qrData: response.data,
-        companyId,
-        amount: qrDto.amount,
-        transactionCode: payload.codeTransaction,
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 minutos
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        qrId: recharge.qrId,
+        qrStatus: recharge.qrStatus,
+        paymentStatus: recharge.paymentStatus,
+        paidAt: recharge.paidAt,
+        credits: recharge.credits,
+        amount: recharge.amount,
       };
-    } catch (error) {
-      this.logger.error(`❌ Error generando QR: ${error.message}`);
-      throw new HttpException(
-        `Error generando QR: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
     }
-  }
 
-  /**
-   * Genera URL de pago (alternativa al QR)
-   */
-  async generateUrl(
-    companyId: string,
-    urlDto: GenerateUrlDto,
-  ): Promise<any> {
+    const companyCode = this.getCompanyCode(companyId);
+
     try {
-      this.logger.log(`🔗 Generando URL de pago para empresa ${companyId}, monto: ${urlDto.amount}`);
-
-      const company = await this.companyRepository.findOne({
-        where: { id: companyId },
-      });
-
-      if (!company) {
-        throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
-      }
-
-      const payload = {
-        companyCode: this.YOPAGO_CONFIG.companyCode,
-        codeTransaction: urlDto.codeTransaction || `URL-${Date.now()}`,
-        urlSuccess: urlDto.urlSuccess || 'https://omninotify.com/pago-exitoso',
-        urlFailed: urlDto.urlFailed || 'https://omninotify.com/pago-fallido',
-        billName: urlDto.billName || company.name,
-        billNit: urlDto.billNit || '123456789',
-        email: urlDto.email || 'cliente@ejemplo.com',
-        generateBill: urlDto.generateBill || '1',
-        concept: urlDto.concept || `Recarga de créditos - ${company.name}`,
-        currency: urlDto.currency || 'BOB',
-        amount: urlDto.amount.toString(),
-        messagePayment: urlDto.messagePayment || 'Gracias por tu compra',
-        codeExternal: urlDto.codeExternal || '',
-      };
-
-      const response = await firstValueFrom(
-        this.httpService.post(`${this.YOPAGO_CONFIG.baseUrl}/pay/api/generateUrl`, payload, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }),
-      );
-
-      this.logger.log(`✅ URL generada exitosamente: ${response.data.paymentUrl}`);
-
-      return {
-        success: true,
-        paymentUrl: response.data.paymentUrl,
-        companyId,
-        amount: urlDto.amount,
-        transactionCode: payload.codeTransaction,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 horas
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error generando URL: ${error.message}`);
-      throw new HttpException(
-        `Error generando URL: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
-   * Verifica el estado de un pago por QR
-   */
-  async verifyQr(
-    companyId: string,
-    verifyDto: VerifyQrDto,
-  ): Promise<any> {
-    try {
-      this.logger.log(`🔍 Verificando pago QR: ${verifyDto.qrId}`);
-
-      const payload = {
-        companyCode: this.YOPAGO_CONFIG.companyCode,
+      // Verificar con Yopago
+      const verifyRequest = {
+        companyCode,
         transactionId: verifyDto.transactionId,
         qrId: verifyDto.qrId,
       };
 
       const response = await firstValueFrom(
-        this.httpService.post(`${this.YOPAGO_CONFIG.baseUrl}/pay/qr/verifyQr`, payload, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }),
+        this.httpService.post(
+          `${this.yopagoApiUrl}/pay/qr/verifyQr`,
+          verifyRequest
+        )
       );
 
-      this.logger.log(`✅ Verificación completada: ${JSON.stringify(response.data)}`);
+      console.log('📥 Respuesta de verificación Yopago:', response.data);
 
-      // Si el pago fue exitoso, agregar créditos
-      if (response.data.status === 'SUCCESS') {
-        const amount = parseInt(response.data.amount) || 0;
-        if (amount > 0) {
-          const result = await this.purchaseCredits(companyId, {
-            amount,
-            paymentMethod: 'QR',
-            paymentId: response.data.paymentId || verifyDto.transactionId,
-            metadata: {
-              qrId: verifyDto.qrId,
-              transactionId: verifyDto.transactionId,
-              provider: 'yopago',
-              providerResponse: response.data,
-            },
-          });
-          return {
-            ...response.data,
-            credits: result,
-          };
-        }
+      // 🔥 CORREGIDO: Verificar la estructura correcta de la respuesta
+      if (response.data.status !== 0) {
+        throw new BadRequestException(response.data.message || 'Error al verificar QR');
       }
 
+      // 🔥 IMPORTANTE: Yopago puede devolver la información directamente en response.data
+      // o en response.data.data dependiendo del endpoint
+      const yopagoData = response.data.data || response.data;
+
+      // Verificar si hay datos
+      if (!yopagoData) {
+        this.logger.warn('Respuesta de Yopago sin datos:', response.data);
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          qrId: recharge.qrId,
+          qrStatus: recharge.qrStatus,
+          paymentStatus: recharge.paymentStatus,
+          paidAt: recharge.paidAt,
+          credits: recharge.credits,
+          amount: recharge.amount,
+          message: 'Estado pendiente - esperando pago'
+        };
+      }
+
+      // 🔥 Actualizar según el estado devuelto por Yopago
+      const estado = yopagoData.status || yopagoData.estado || 'PENDING';
+      
+      if (estado === 'PAID' || estado === 'PAGADO') {
+        recharge.qrStatus = QrStatus.PAID;
+        recharge.paymentStatus = PaymentStatus.PAID;
+        recharge.paidAt = yopagoData.paymentDate ? new Date(yopagoData.paymentDate) : new Date();
+        
+        await this.rechargeRepository.save(recharge);
+        
+        // Procesar el pago exitoso
+        await this.processSuccessfulPayment(recharge);
+        
+      } else if (estado === 'EXPIRED' || estado === 'VENCIDO') {
+        recharge.qrStatus = QrStatus.EXPIRED;
+        recharge.paymentStatus = PaymentStatus.EXPIRED;
+        await this.rechargeRepository.save(recharge);
+        
+      } else if (estado === 'CANCELLED' || estado === 'CANCELADO') {
+        recharge.qrStatus = QrStatus.CANCELLED;
+        recharge.paymentStatus = PaymentStatus.FAILED;
+        await this.rechargeRepository.save(recharge);
+        
+      } else {
+        // Estado PENDING - no es error, solo informar
+        this.logger.log(`QR pendiente para transacción: ${verifyDto.transactionId}`);
+        
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          qrId: recharge.qrId,
+          qrStatus: recharge.qrStatus,
+          paymentStatus: recharge.paymentStatus,
+          paidAt: recharge.paidAt,
+          credits: recharge.credits,
+          amount: recharge.amount,
+          message: yopagoData.message || 'Transacción pendiente - escanee el código QR'
+        };
+      }
+
+      // Devolver estado actualizado
       return {
-        ...response.data,
-        credits: null,
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        qrId: recharge.qrId,
+        qrStatus: recharge.qrStatus,
+        paymentStatus: recharge.paymentStatus,
+        paidAt: recharge.paidAt,
+        credits: recharge.credits,
+        amount: recharge.amount,
       };
+      
     } catch (error) {
-      this.logger.error(`❌ Error verificando QR: ${error.message}`);
-      throw new HttpException(
-        `Error verificando QR: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      this.logger.error(`Error al verificar QR: ${error.message}`, error.stack);
+      
+      // Si hay respuesta de error de Yopago, intentar extraer mensaje
+      if (error.response?.data?.message) {
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          qrId: recharge.qrId,
+          qrStatus: recharge.qrStatus,
+          paymentStatus: recharge.paymentStatus,
+          paidAt: recharge.paidAt,
+          credits: recharge.credits,
+          amount: recharge.amount,
+          message: error.response.data.message
+        };
+      }
+      
+      // Si el error es por timeout o conexión, devolver estado actual
+      return {
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        qrId: recharge.qrId,
+        qrStatus: recharge.qrStatus,
+        paymentStatus: recharge.paymentStatus,
+        paidAt: recharge.paidAt,
+        credits: recharge.credits,
+        amount: recharge.amount,
+        message: 'Error al verificar - reintentando...'
+      };
     }
   }
 
   /**
-   * Verifica una transacción por URL
+   * Verificar el estado de una transferencia/URL
    */
-  async verifyTransaction(
-    companyId: string,
-    transactionId: string,
-  ): Promise<any> {
-    try {
-      this.logger.log(`🔍 Verificando transacción: ${transactionId}`);
+  async verifyTransferRecharge(companyId: string, verifyDto: VerifyTransactionDto): Promise<any> {
+    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    if (!company) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
 
-      const payload = {
-        companyCode: this.YOPAGO_CONFIG.companyCode,
-        transactionId,
+    // Buscar la recarga
+    const recharge = await this.rechargeRepository.findOne({
+      where: {
+        transactionId: verifyDto.transactionId,
+        companyId: companyId,
+        paymethod: PayMethod.CARD,
+      },
+    });
+
+    if (!recharge) {
+      throw new NotFoundException('Recarga no encontrada');
+    }
+
+    // Si ya está pagada, no volver a verificar
+    if (recharge.paymentStatus === PaymentStatus.PAID) {
+      return {
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        paymentStatus: recharge.paymentStatus,
+        paidAt: recharge.paidAt,
+        credits: recharge.credits,
+        amount: recharge.amount,
+      };
+    }
+
+    const companyCode = this.getCompanyCode(companyId);
+
+    try {
+      // Verificar con Yopago
+      const verifyRequest = {
+        companyCode,
+        transactionId: verifyDto.transactionId,
       };
 
       const response = await firstValueFrom(
-        this.httpService.post(`${this.YOPAGO_CONFIG.baseUrl}/pay/api/verifyTransfer`, payload, {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }),
+        this.httpService.post(
+          `${this.yopagoApiUrl}/pay/api/verifyTransfer`,
+          verifyRequest
+        )
       );
 
-      this.logger.log(`✅ Transacción verificada: ${JSON.stringify(response.data)}`);
+      console.log('📥 Respuesta de verificación Yopago:', response.data);
 
-      if (response.data.status === 'SUCCESS') {
-        const amount = parseInt(response.data.amount) || 0;
-        if (amount > 0) {
-          const result = await this.purchaseCredits(companyId, {
-            amount,
-            paymentMethod: 'TRANSFER',
-            paymentId: response.data.paymentId || transactionId,
-            metadata: {
-              transactionId,
-              provider: 'yopago',
-              providerResponse: response.data,
-            },
-          });
-          return {
-            ...response.data,
-            credits: result,
-          };
+      // Verificar estructura de respuesta
+      if (response.data.status !== 0) {
+        throw new BadRequestException(response.data.message || 'Error al verificar transferencia');
+      }
+
+      const yopagoData = response.data.data || response.data;
+
+      if (!yopagoData) {
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          paymentStatus: recharge.paymentStatus,
+          paidAt: recharge.paidAt,
+          credits: recharge.credits,
+          amount: recharge.amount,
+          message: 'Estado pendiente'
+        };
+      }
+
+      const estado = yopagoData.status || yopagoData.estado || 'PENDING';
+
+      if (estado === 'PAID' || estado === 'PAGADO') {
+        recharge.paymentStatus = PaymentStatus.PAID;
+        recharge.paidAt = yopagoData.paymentDate ? new Date(yopagoData.paymentDate) : new Date();
+        
+        await this.rechargeRepository.save(recharge);
+        await this.processSuccessfulPayment(recharge);
+        
+      } else if (estado === 'EXPIRED' || estado === 'VENCIDO') {
+        recharge.paymentStatus = PaymentStatus.EXPIRED;
+        await this.rechargeRepository.save(recharge);
+        
+      } else if (estado === 'FAILED' || estado === 'FALLIDO') {
+        recharge.paymentStatus = PaymentStatus.FAILED;
+        await this.rechargeRepository.save(recharge);
+        
+      } else {
+        this.logger.log(`Transferencia pendiente: ${verifyDto.transactionId}`);
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          paymentStatus: recharge.paymentStatus,
+          paidAt: recharge.paidAt,
+          credits: recharge.credits,
+          amount: recharge.amount,
+          message: yopagoData.message || 'Transacción pendiente'
+        };
+      }
+
+      return {
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        paymentStatus: recharge.paymentStatus,
+        paidAt: recharge.paidAt,
+        credits: recharge.credits,
+        amount: recharge.amount,
+      };
+      
+    } catch (error) {
+      this.logger.error(`Error al verificar transferencia: ${error.message}`, error.stack);
+      
+      if (error.response?.data?.message) {
+        return {
+          id: recharge.id,
+          transactionId: recharge.transactionId,
+          paymentStatus: recharge.paymentStatus,
+          paidAt: recharge.paidAt,
+          credits: recharge.credits,
+          amount: recharge.amount,
+          message: error.response.data.message
+        };
+      }
+      
+      return {
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        paymentStatus: recharge.paymentStatus,
+        paidAt: recharge.paidAt,
+        credits: recharge.credits,
+        amount: recharge.amount,
+        message: 'Error al verificar'
+      };
+    }
+  }
+
+  /**
+   * Procesar webhook de Yopago (llamada automática cuando cambia el estado)
+   */
+  async handleYopagoWebhook(body: any): Promise<void> {
+    this.logger.log(`Webhook recibido de Yopago: ${JSON.stringify(body)}`);
+
+    // Buscar la recarga por transactionId
+    const recharge = await this.rechargeRepository.findOne({
+      where: { transactionId: body.transactionId },
+    });
+
+    if (!recharge) {
+      this.logger.warn(`Recarga no encontrada para transactionId: ${body.transactionId}`);
+      return;
+    }
+
+    // Actualizar según el tipo de pago
+    if (recharge.paymethod === PayMethod.QR) {
+      if (body.qrId && body.qrId !== recharge.qrId) {
+        this.logger.warn(`QR ID no coincide para transactionId: ${body.transactionId}`);
+        return;
+      }
+
+      if (body.status === 'PAID' || body.status === 'PAGADO') {
+        recharge.qrStatus = QrStatus.PAID;
+        recharge.paymentStatus = PaymentStatus.PAID;
+        if (body.paymentDate) {
+          recharge.paidAt = new Date(body.paymentDate);
         }
+        await this.rechargeRepository.save(recharge);
+        await this.processSuccessfulPayment(recharge);
+        
+      } else if (body.status === 'EXPIRED' || body.status === 'VENCIDO') {
+        recharge.qrStatus = QrStatus.EXPIRED;
+        recharge.paymentStatus = PaymentStatus.EXPIRED;
+        await this.rechargeRepository.save(recharge);
+        
+      } else if (body.status === 'CANCELLED' || body.status === 'CANCELADO') {
+        recharge.qrStatus = QrStatus.CANCELLED;
+        recharge.paymentStatus = PaymentStatus.FAILED;
+        await this.rechargeRepository.save(recharge);
       }
-
-      return {
-        ...response.data,
-        credits: null,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Error verificando transacción: ${error.message}`);
-      throw new HttpException(
-        `Error verificando transacción: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      
+    } else {
+      // Para pagos con tarjeta
+      if (body.status === 'PAID' || body.status === 'PAGADO') {
+        recharge.paymentStatus = PaymentStatus.PAID;
+        if (body.paymentDate) {
+          recharge.paidAt = new Date(body.paymentDate);
+        }
+        await this.rechargeRepository.save(recharge);
+        await this.processSuccessfulPayment(recharge);
+        
+      } else if (body.status === 'EXPIRED' || body.status === 'VENCIDO') {
+        recharge.paymentStatus = PaymentStatus.EXPIRED;
+        await this.rechargeRepository.save(recharge);
+        
+      } else if (body.status === 'FAILED' || body.status === 'FALLIDO') {
+        recharge.paymentStatus = PaymentStatus.FAILED;
+        await this.rechargeRepository.save(recharge);
+      }
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // 💳 COMPRA DE CRÉDITOS (TRANSACCIONES REALES)
-  // ═══════════════════════════════════════════════════════════════════════════
-
   /**
-   * Compra real de créditos (con validación de pago)
+   * Procesar un pago exitoso: acreditar créditos y registrar transacción
    */
-  async purchaseCredits(
-    companyId: string,
-    purchaseDto: PurchaseCreditsDto,
-  ): Promise<PurchaseCreditsResponseDto> {
+  private async processSuccessfulPayment(recharge: CreditRecharge): Promise<void> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const company = await queryRunner.manager
-        .createQueryBuilder(Company, 'company')
-        .setLock('pessimistic_write')
-        .where('company.id = :id', { id: companyId })
-        .getOne();
-
-      if (!company) {
-        throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
-      }
-
-      const currentBalance = company.current_credits || 0;
-      const newBalance = currentBalance + purchaseDto.amount;
-
-      await queryRunner.manager.update(
-        Company,
-        { id: companyId },
-        { current_credits: newBalance },
-      );
-
-      const transaction = this.creditTransactionRepository.create({
-        id: uuidv4(),
-        companyId: companyId,
-        type: CreditTransactionType.PURCHASE,
-        amount: purchaseDto.amount,
-        balanceBefore: currentBalance,
-        balanceAfter: newBalance,
-        description: `Compra de ${purchaseDto.amount} créditos vía ${purchaseDto.paymentMethod}`,
-        metadata: {
-          paymentMethod: purchaseDto.paymentMethod,
-          paymentId: purchaseDto.paymentId,
-          ...purchaseDto.metadata,
-        },
+      // Obtener la compañía con bloqueo para evitar condiciones de carrera
+      const company = await queryRunner.manager.findOne(Company, {
+        where: { id: recharge.companyId },
+        lock: { mode: 'pessimistic_write' },
       });
 
-      const savedTransaction = await queryRunner.manager.save(transaction);
+      if (!company) {
+        throw new NotFoundException('Empresa no encontrada');
+      }
+
+      const balanceBefore = company.current_credits;
+      const balanceAfter = balanceBefore + recharge.credits;
+
+      // Actualizar créditos de la compañía
+      await queryRunner.manager.update(
+        Company,
+        { id: recharge.companyId },
+        { current_credits: balanceAfter }
+      );
+
+      // Registrar la transacción
+      const transaction = new CreditTransaction();
+      transaction.id = uuidv4();
+      transaction.companyId = recharge.companyId;
+      transaction.type = TransactionType.PURCHASE;
+      transaction.amount = recharge.credits;
+      transaction.balanceBefore = balanceBefore;
+      transaction.balanceAfter = balanceAfter;
+      transaction.rechargeId = recharge.id;
+      transaction.description = `Compra de ${recharge.credits} créditos vía ${recharge.paymethod}`;
+      transaction.metadata = {
+        paymentId: recharge.transactionId,
+        paymentMethod: recharge.paymethod,
+        amount: recharge.amount,
+        qrId: recharge.qrId,
+      };
+
+      await queryRunner.manager.save(transaction);
+
       await queryRunner.commitTransaction();
 
-      return {
-        success: true,
-        message: 'Créditos comprados exitosamente',
-        transaction: this.toTransactionResponse(savedTransaction),
-        newBalance,
-      };
+      this.logger.log(`Pago procesado exitosamente: ${recharge.id} - ${recharge.credits} créditos acreditados a ${recharge.companyId}`);
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      this.logger.error(`Error al procesar pago exitoso: ${error.message}`, error.stack);
       throw error;
     } finally {
       await queryRunner.release();
@@ -557,140 +693,183 @@ export class CreditsService {
   }
 
   /**
-   * Simula una compra de créditos (solo para testing)
+   * Obtener el historial de recargas de una empresa
    */
-  async simulatePurchase(
-    companyId: string,
-    simulateDto: SimulatePurchaseDto,
-  ): Promise<PurchaseCreditsResponseDto> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  async getRechargeHistory(companyId: string, limit: number = 20, offset: number = 0): Promise<any> {
+    const [recharges, total] = await this.rechargeRepository.findAndCount({
+      where: { companyId: companyId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
 
-    try {
-      const company = await queryRunner.manager
-        .createQueryBuilder(Company, 'company')
-        .setLock('pessimistic_write')
-        .where('company.id = :id', { id: companyId })
-        .getOne();
-
-      if (!company) {
-        throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
-      }
-
-      const currentBalance = company.current_credits || 0;
-      const newBalance = currentBalance + simulateDto.amount;
-
-      await queryRunner.manager.update(
-        Company,
-        { id: companyId },
-        { current_credits: newBalance },
-      );
-
-      const transaction = this.creditTransactionRepository.create({
-        id: uuidv4(),
-        companyId: companyId,
-        type: CreditTransactionType.PURCHASE,
-        amount: simulateDto.amount,
-        balanceBefore: currentBalance,
-        balanceAfter: newBalance,
-        description: `Compra de ${simulateDto.amount} créditos vía SIMULATION`,
-        metadata: {
-          paymentMethod: 'SIMULATION',
-          paymentId: `SIM-${Date.now()}`,
-          simulation: true,
-        },
-      });
-
-      const savedTransaction = await queryRunner.manager.save(transaction);
-      await queryRunner.commitTransaction();
-
-      return {
-        success: true,
-        message: 'Simulación de compra exitosa',
-        transaction: this.toTransactionResponse(savedTransaction),
-        newBalance,
-      };
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
-    }
+    return {
+      total,
+      limit,
+      offset,
+      data: recharges.map(recharge => ({
+        id: recharge.id,
+        paymethod: recharge.paymethod,
+        transactionId: recharge.transactionId,
+        qrId: recharge.qrId,
+        amount: recharge.amount,
+        credits: recharge.credits,
+        qrStatus: recharge.qrStatus,
+        paymentStatus: recharge.paymentStatus,
+        createdAt: recharge.createdAt,
+        paidAt: recharge.paidAt,
+        expiresAt: recharge.expiresAt,
+      })),
+    };
   }
 
   /**
-   * Simula un descuento de créditos (solo para testing)
+   * Obtener costo por canal
    */
-  async simulateDeduction(
+  async getChannelCost(channel: Channel): Promise<number> {
+    const channelCost = await this.channelCostRepository.findOne({
+      where: { channel: channel },
+    });
+
+    return channelCost?.costPerMessage || 1;
+  }
+
+  /**
+   * Verificar si una empresa tiene suficientes créditos
+   */
+  async hasEnoughCredits(companyId: string, channel: NotificationChannel, recipientCount: number = 1): Promise<boolean> {
+    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    if (!company) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    const costPerMessage = await this.getChannelCost(channel as any);
+    const totalCost = costPerMessage * recipientCount;
+
+    return company.current_credits >= totalCost;
+  }
+
+  /**
+   * Deducir créditos por envío de notificación
+   */
+  async deductCredits(
     companyId: string,
-    channel: 'EMAIL' | 'SMS' | 'WHATSAPP',
+    channel: NotificationChannel,
     recipient: string,
-  ): Promise<PurchaseCreditsResponseDto> {
-    return this.deductCredits(companyId, channel, recipient);
+    referenceId: string,
+    queryRunner?: any,
+  ): Promise<{ transaction: CreditTransaction; balanceAfter: number }> {
+    const useQueryRunner = queryRunner || this.dataSource.createQueryRunner();
+    if (!queryRunner) {
+      await useQueryRunner.connect();
+      await useQueryRunner.startTransaction();
+    }
+
+    try {
+      // Obtener costo por canal
+      const costPerMessage = await this.getChannelCost(channel as any);
+
+      // Obtener la compañía con bloqueo
+      const company = await useQueryRunner.manager.findOne(Company, {
+        where: { id: companyId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!company) {
+        throw new NotFoundException('Empresa no encontrada');
+      }
+
+      // Verificar créditos suficientes
+      if (company.current_credits < costPerMessage) {
+        throw new BadRequestException(
+          `Créditos insuficientes. Necesitas ${costPerMessage} créditos, tienes ${company.current_credits}`
+        );
+      }
+
+      const balanceBefore = company.current_credits;
+      const balanceAfter = balanceBefore - costPerMessage;
+
+      // Actualizar créditos de la compañía
+      await useQueryRunner.manager.update(
+        Company,
+        { id: companyId },
+        { current_credits: balanceAfter }
+      );
+
+      // Registrar la transacción
+      const transaction = new CreditTransaction();
+      transaction.id = uuidv4();
+      transaction.companyId = companyId;
+      transaction.type = TransactionType.DEDUCTION;
+      transaction.amount = -costPerMessage;
+      transaction.balanceBefore = balanceBefore;
+      transaction.balanceAfter = balanceAfter;
+      transaction.channel = channel as any;
+      transaction.referenceId = referenceId;
+      transaction.description = `Envío de ${channel} a ${recipient}`;
+      transaction.metadata = {
+        channel,
+        recipient,
+        timestamp: new Date().toISOString(),
+      };
+
+      await useQueryRunner.manager.save(transaction);
+
+      if (!queryRunner) {
+        await useQueryRunner.commitTransaction();
+      }
+
+      // Disparar evento de créditos actualizados
+      setTimeout(() => {
+        const event = new CustomEvent('credits-updated', {
+          detail: {
+            companyId,
+            credits: balanceAfter,
+          },
+        });
+        (global as any).eventEmitter?.emit('credits-updated', {
+          companyId,
+          credits: balanceAfter,
+        });
+      }, 0);
+
+      return {
+        transaction,
+        balanceAfter,
+      };
+    } catch (error) {
+      if (!queryRunner) {
+        await useQueryRunner.rollbackTransaction();
+      }
+      throw error;
+    } finally {
+      if (!queryRunner) {
+        await useQueryRunner.release();
+      }
+    }
   }
 
   /**
-   * Otorga créditos como bono (solo administradores)
+   * Tarea programada para marcar como expiradas las recargas pendientes
+   * Se ejecuta cada hora
    */
-  async grantBonus(
-    companyId: string,
-    amount: number,
-    reason: string,
-    adminId?: string,
-  ): Promise<PurchaseCreditsResponseDto> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  @Cron('0 * * * *')
+  async handleExpiredRecharges() {
+    const now = new Date();
+    const expiredRecharges = await this.rechargeRepository.find({
+      where: {
+        paymentStatus: PaymentStatus.PENDING,
+        expiresAt: LessThan(now),
+      },
+    });
 
-    try {
-      const company = await queryRunner.manager
-        .createQueryBuilder(Company, 'company')
-        .setLock('pessimistic_write')
-        .where('company.id = :id', { id: companyId })
-        .getOne();
-
-      if (!company) {
-        throw new NotFoundException(`Empresa con ID ${companyId} no encontrada`);
+    for (const recharge of expiredRecharges) {
+      recharge.paymentStatus = PaymentStatus.EXPIRED;
+      if (recharge.paymethod === PayMethod.QR) {
+        recharge.qrStatus = QrStatus.EXPIRED;
       }
-
-      const currentBalance = company.current_credits || 0;
-      const newBalance = currentBalance + amount;
-
-      await queryRunner.manager.update(
-        Company,
-        { id: companyId },
-        { current_credits: newBalance },
-      );
-
-      const transaction = this.creditTransactionRepository.create({
-        id: uuidv4(),
-        companyId: companyId,
-        type: CreditTransactionType.BONUS,
-        amount: amount,
-        balanceBefore: currentBalance,
-        balanceAfter: newBalance,
-        description: reason,
-        metadata: {
-          grantedBy: adminId,
-          reason,
-        },
-      });
-
-      const savedTransaction = await queryRunner.manager.save(transaction);
-      await queryRunner.commitTransaction();
-
-      return {
-        success: true,
-        message: `Bono de ${amount} créditos otorgado exitosamente`,
-        transaction: this.toTransactionResponse(savedTransaction),
-        newBalance,
-      };
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
+      await this.rechargeRepository.save(recharge);
+      this.logger.log(`Recarga expirada: ${recharge.id}`);
     }
   }
 }

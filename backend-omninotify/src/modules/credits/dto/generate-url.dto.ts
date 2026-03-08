@@ -1,65 +1,41 @@
 // src/modules/credits/dto/generate-url.dto.ts
-import { IsString, IsOptional, IsNumber, Min, IsEmail } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsNumber, IsString, IsOptional, Min, MaxLength } from 'class-validator';
 
 export class GenerateUrlDto {
-  @ApiProperty({ description: 'Monto a pagar', example: 100 })
+  @ApiProperty({ description: 'Monto en bolivianos (Bs)', minimum: 1, example: 50 })
   @IsNumber()
   @Min(1)
+  @IsNotEmpty()
   amount: number;
 
-  @ApiPropertyOptional({ description: 'Código de transacción único', example: 'URL-123456' })
-  @IsOptional()
-  @IsString()
-  codeTransaction?: string;
+  @ApiProperty({ description: 'Cantidad de créditos a comprar', minimum: 1, example: 50 })
+  @IsNumber()
+  @Min(1)
+  @IsNotEmpty()
+  credits: number;
 
-  @ApiPropertyOptional({ description: 'URL de éxito', example: 'https://omninotify.com/exito' })
-  @IsOptional()
+  @ApiProperty({ description: 'Nombre para la factura', required: false, example: 'Juan Pérez' })
   @IsString()
-  urlSuccess?: string;
-
-  @ApiPropertyOptional({ description: 'URL de fallo', example: 'https://omninotify.com/fallo' })
   @IsOptional()
-  @IsString()
-  urlFailed?: string;
-
-  @ApiPropertyOptional({ description: 'Nombre del pagador', example: 'Juan Pérez' })
-  @IsOptional()
-  @IsString()
+  @MaxLength(150)
   billName?: string;
 
-  @ApiPropertyOptional({ description: 'NIT del pagador', example: '123456789' })
-  @IsOptional()
+  @ApiProperty({ description: 'NIT para la factura', required: false, example: '123456789' })
   @IsString()
+  @IsOptional()
+  @MaxLength(20)
   billNit?: string;
 
-  @ApiPropertyOptional({ description: 'Email del pagador', example: 'cliente@ejemplo.com' })
+  @ApiProperty({ description: 'Email para la factura', required: false, example: 'cliente@email.com' })
+  @IsString()
   @IsOptional()
-  @IsEmail()
+  @MaxLength(150)
   email?: string;
 
-  @ApiPropertyOptional({ description: 'Generar factura (1=Sí, 0=No)', example: '1' })
-  @IsOptional()
+  @ApiProperty({ description: 'Concepto del pago', required: false, default: 'Recarga de créditos' })
   @IsString()
-  generateBill?: string;
-
-  @ApiPropertyOptional({ description: 'Concepto del pago', example: 'Recarga de créditos' })
   @IsOptional()
-  @IsString()
+  @MaxLength(255)
   concept?: string;
-
-  @ApiPropertyOptional({ description: 'Moneda', example: 'BOB' })
-  @IsOptional()
-  @IsString()
-  currency?: string;
-
-  @ApiPropertyOptional({ description: 'Mensaje de pago', example: 'Gracias por tu compra' })
-  @IsOptional()
-  @IsString()
-  messagePayment?: string;
-
-  @ApiPropertyOptional({ description: 'Código externo', example: '' })
-  @IsOptional()
-  @IsString()
-  codeExternal?: string;
 }

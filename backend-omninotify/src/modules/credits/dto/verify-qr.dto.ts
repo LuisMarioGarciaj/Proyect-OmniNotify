@@ -1,18 +1,15 @@
 // src/modules/credits/dto/verify-qr.dto.ts
-import { IsString, IsOptional } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class VerifyQrDto {
-  @ApiProperty({ description: 'ID de la transacción', example: '650484' })
+  @ApiProperty({ description: 'ID de transacción de Yopago', example: '650484' })
   @IsString()
+  @IsNotEmpty()
   transactionId: string;
 
   @ApiProperty({ description: 'ID del QR', example: '55406677' })
   @IsString()
+  @IsNotEmpty()
   qrId: string;
-
-  @ApiPropertyOptional({ description: 'Código de empresa (opcional, usa el default si no se envía)' })
-  @IsOptional()
-  @IsString()
-  companyCode?: string;
 }

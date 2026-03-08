@@ -30,4 +30,5 @@ export class User {
     default: 'ACTIVE'
   })
   status: string;
+  company: any;
 }

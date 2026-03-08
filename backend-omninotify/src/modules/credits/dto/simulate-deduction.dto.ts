@@ -1,21 +1,26 @@
 // src/modules/credits/dto/simulate-deduction.dto.ts
-import { IsEnum, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString, IsEnum, IsNumber, Min } from 'class-validator';
 import { NotificationChannel } from '../entities/credit-transaction.entity';
 
 export class SimulateDeductionDto {
-  @ApiProperty({
-    description: 'Canal de envío a simular',
-    enum: NotificationChannel,
-    example: 'WHATSAPP',
-  })
+  @ApiProperty({ description: 'ID de la empresa' })
+  @IsString()
+  @IsNotEmpty()
+  companyId: string;
+
+  @ApiProperty({ enum: NotificationChannel, description: 'Canal de notificación' })
   @IsEnum(NotificationChannel)
+  @IsNotEmpty()
   channel: NotificationChannel;
 
-  @ApiProperty({
-    description: 'Número o email del destinatario (solo referencia, no se envía nada)',
-    example: '+59176131645',
-  })
+  @ApiProperty({ description: 'Número de destinatarios', minimum: 1, default: 1 })
+  @IsNumber()
+  @Min(1)
+  @IsNotEmpty()
+  recipientCount: number;
+
+  @ApiProperty({ description: 'Descripción de la deducción', required: false })
   @IsString()
-  recipient: string;
+  description?: string;
 }

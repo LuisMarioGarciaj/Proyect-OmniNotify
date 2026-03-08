@@ -1,4 +1,4 @@
-// src/services/api.ts
+// frontend_omninitify/src/services/api.ts
 class ApiService {
   private baseURL: string;
 
@@ -42,6 +42,7 @@ class ApiService {
   }
 
   async get(endpoint: string) {
+    console.log(`🔍 GET request to: ${this.baseURL}${endpoint}`);
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: 'GET',
       headers: this.getHeaders(),
@@ -51,6 +52,7 @@ class ApiService {
   }
 
   async post(endpoint: string, data: any) {
+    console.log(`📝 POST request to: ${this.baseURL}${endpoint}`, data);
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: 'POST',
       headers: this.getHeaders(),
@@ -61,6 +63,7 @@ class ApiService {
   }
 
   async put(endpoint: string, data: any) {
+    console.log(`📝 PUT request to: ${this.baseURL}${endpoint}`, data);
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: 'PUT',
       headers: this.getHeaders(),
@@ -70,10 +73,10 @@ class ApiService {
     return this.handleResponse(response);
   }
 
-  // ✅ NUEVO: Método PATCH agregado
   async patch(endpoint: string, data: any) {
+    console.log(`📝 PATCH request to: ${this.baseURL}${endpoint}`, data);
     const response = await fetch(`${this.baseURL}${endpoint}`, {
-      method: 'PATCH', // <-- Método PATCH
+      method: 'PATCH',
       headers: this.getHeaders(),
       body: JSON.stringify(data),
     });
@@ -82,6 +85,7 @@ class ApiService {
   }
 
   async delete(endpoint: string) {
+    console.log(`🗑️ DELETE request to: ${this.baseURL}${endpoint}`);
     const response = await fetch(`${this.baseURL}${endpoint}`, {
       method: 'DELETE',
       headers: this.getHeaders(),

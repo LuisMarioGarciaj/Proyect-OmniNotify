@@ -33,6 +33,8 @@ import {
 // Importar módulo de créditos
 import { CreditsService } from '../../credits/credits.service';
 import { Company } from '../../companies/entities/company.entity';
+import { Channel as CreditsChannel } from '../../credits/entities/channel-cost.entity';
+import { NotificationChannel as CreditsNotificationChannel } from '../../credits/entities/credit-transaction.entity';
 
 // Tipo extendido para datos procesados (content es requerido)
 type ProcessedNotificationDto = SendNotificationDto & {
@@ -87,6 +89,32 @@ export class NotificationProcessor extends WorkerHost {
     this.logger.error(`❌ Job ${job.id} falló: ${error.message}`);
   }
 
+  /**
+   * Mapea NotificationChannel del módulo de notificaciones a CreditsChannel
+   */
+  private mapToCreditsChannel(channel: NotificationChannel): CreditsChannel {
+    const mapping: Record<NotificationChannel, CreditsChannel> = {
+      [NotificationChannel.EMAIL]: CreditsChannel.EMAIL,
+      [NotificationChannel.SMS]: CreditsChannel.SMS,
+      [NotificationChannel.WHATSAPP]: CreditsChannel.WHATSAPP,
+    };
+    
+    return mapping[channel];
+  }
+
+  /**
+   * Mapea NotificationChannel a CreditsNotificationChannel (para transacciones)
+   */
+  private mapToCreditsNotificationChannel(channel: NotificationChannel): CreditsNotificationChannel {
+    const mapping: Record<NotificationChannel, CreditsNotificationChannel> = {
+      [NotificationChannel.EMAIL]: CreditsNotificationChannel.EMAIL,
+      [NotificationChannel.SMS]: CreditsNotificationChannel.SMS,
+      [NotificationChannel.WHATSAPP]: CreditsNotificationChannel.WHATSAPP,
+    };
+    
+    return mapping[channel];
+  }
+
   async process(job: Job<SendNotificationDto>): Promise<any> {
     const { data } = job;
 
@@ -94,32 +122,29 @@ export class NotificationProcessor extends WorkerHost {
       `📨 Procesando notificación ${data.channel} para: ${data.recipient}`,
     );
 
-    const CHANNEL_COSTS = {
-      [NotificationChannel.EMAIL]: 1,
-      [NotificationChannel.SMS]: 2,
-      [NotificationChannel.WHATSAPP]: 1,
-    };
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const requiredCredits = CHANNEL_COSTS[data.channel] || 1;
+      // 🔥 MAPEAR NOTIFICATIONCHANNEL A CREDITSCHANNEL
+      const creditsChannel = this.mapToCreditsChannel(data.channel);
+      const creditsNotificationChannel = this.mapToCreditsNotificationChannel(data.channel);
       
+      // 🔥 Verificar créditos suficientes
       const hasCredits = await this.creditsService.hasEnoughCredits(
         data.companyId,
-        data.channel,
+        creditsNotificationChannel, // Usar NotificationChannel para hasEnoughCredits
+        1, // recipientCount = 1
       );
 
       if (!hasCredits) {
         throw new Error(
-          `❌ Créditos insuficientes para ${data.channel}. ` +
-          `Costo: ${requiredCredits}`,
+          `❌ Créditos insuficientes para ${data.channel}.`
         );
       }
 
-      this.logger.log(`💰 Créditos suficientes: ${requiredCredits} crédito(s) disponibles`);
+      this.logger.log(`💰 Créditos suficientes`);
 
       const notificationLog = this.notificationLogsRepository.create({
         companyId: data.companyId,
@@ -139,16 +164,31 @@ export class NotificationProcessor extends WorkerHost {
         throw new Error('El contenido del mensaje no puede estar vacío');
       }
 
-      const deductionResult = await this.creditsService.deductCredits(
-        data.companyId,
-        data.channel,
-        data.recipient,
-        notificationLog.id,
-        queryRunner,
+      // Obtener costo por canal
+      const costPerMessage = await this.creditsService.getChannelCost(creditsChannel);
+      
+      // Obtener la compañía con bloqueo
+      const company = await queryRunner.manager.findOne(Company, {
+        where: { id: data.companyId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!company) {
+        throw new Error('Empresa no encontrada');
+      }
+
+      const balanceBefore = company.current_credits;
+      const balanceAfter = balanceBefore - costPerMessage;
+
+      // Actualizar créditos de la compañía
+      await queryRunner.manager.update(
+        Company,
+        { id: data.companyId },
+        { current_credits: balanceAfter }
       );
 
       this.logger.log(
-        `💰 Créditos descontados: ${Math.abs(deductionResult.transaction.amount)} (Saldo anterior: ${deductionResult.transaction.balanceBefore}, Nuevo: ${deductionResult.transaction.balanceAfter})`,
+        `💰 Créditos descontados: ${costPerMessage} (Saldo anterior: ${balanceBefore}, Nuevo: ${balanceAfter})`,
       );
 
       let result;
@@ -185,6 +225,20 @@ export class NotificationProcessor extends WorkerHost {
 
       await queryRunner.commitTransaction();
 
+      // Disparar evento de créditos actualizados
+      setTimeout(() => {
+        const event = new CustomEvent('credits-updated', {
+          detail: {
+            companyId: data.companyId,
+            credits: balanceAfter,
+          },
+        });
+        (global as any).eventEmitter?.emit('credits-updated', {
+          companyId: data.companyId,
+          credits: balanceAfter,
+        });
+      }, 0);
+
       return {
         success: true,
         jobId: job.id,
@@ -192,9 +246,9 @@ export class NotificationProcessor extends WorkerHost {
         channel: data.channel,
         result,
         credits: {
-          deducted: Math.abs(deductionResult.transaction.amount),
-          balanceBefore: deductionResult.transaction.balanceBefore,
-          balanceAfter: deductionResult.transaction.balanceAfter,
+          deducted: costPerMessage,
+          balanceBefore,
+          balanceAfter,
         },
         timestamp: new Date().toISOString(),
       };
@@ -430,7 +484,7 @@ export class NotificationProcessor extends WorkerHost {
   // SMS
   // ═══════════════════════════════════════════════════════════════
 
-    private async processSms(
+  private async processSms(
     data: ProcessedNotificationDto,
     job: Job,
   ): Promise<any> {
@@ -486,6 +540,7 @@ export class NotificationProcessor extends WorkerHost {
       throw error;
     }
   }
+
   // ═══════════════════════════════════════════════════════════════
   // CONFIG HELPERS
   // ═══════════════════════════════════════════════════════════════
@@ -546,19 +601,4 @@ export class NotificationProcessor extends WorkerHost {
       throw error;
     }
   }
-
-  // private async getCompanySmsConfig(companyId: string): Promise<any> {
-  //   try {
-  //     const credentials = await this.systemConfigService.getVonageCredentials();
-  //     return {
-  //       provider: 'vonage',
-  //       apiKey: credentials.apiKey,
-  //       apiSecret: credentials.apiSecret,
-  //       fromNumber: credentials.fromNumber,
-  //       source: 'system_config',
-  //     };
-  //   } catch (error: any) {
-  //     throw new Error(`No se pudo obtener configuración SMS: ${error.message}`);
-  //   }
-  // }
 }

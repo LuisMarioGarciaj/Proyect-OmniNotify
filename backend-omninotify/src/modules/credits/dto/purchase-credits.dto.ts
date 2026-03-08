@@ -1,39 +1,55 @@
 // src/modules/credits/dto/purchase-credits.dto.ts
-import { IsInt, IsPositive, IsString, IsOptional, IsObject, Min } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsNumber, IsString, IsOptional, IsEnum, Min, MaxLength } from 'class-validator';
+
+export enum PurchaseMethod {
+  CARD = 'CARD',   // Pago con tarjeta (genera URL)
+  QR = 'QR',       // Pago con código QR
+  STRIKE = 'STRIKE' // Transferencia bancaria
+}
 
 export class PurchaseCreditsDto {
-  @ApiProperty({
-    description: 'Cantidad de créditos a comprar',
-    example: 1000,
-    minimum: 1,
+  @ApiProperty({ 
+    enum: PurchaseMethod, 
+    description: 'Método de pago: CARD=tarjeta (genera URL), QR=código QR, STRIKE=transferencia' 
   })
-  @IsInt()
-  @IsPositive()
+  @IsEnum(PurchaseMethod)
+  @IsNotEmpty()
+  method: PurchaseMethod;
+
+  @ApiProperty({ description: 'Monto en bolivianos (Bs)', minimum: 1, example: 50 })
+  @IsNumber()
   @Min(1)
+  @IsNotEmpty()
   amount: number;
 
-  @ApiProperty({
-    description: 'Método de pago utilizado',
-    example: 'QR',
-    enum: ['QR', 'CARD', 'BANK_TRANSFER', 'CASH'],
-  })
-  @IsString()
-  paymentMethod: string;
+  @ApiProperty({ description: 'Cantidad de créditos a comprar', minimum: 1, example: 50 })
+  @IsNumber()
+  @Min(1)
+  @IsNotEmpty()
+  credits: number;
 
-  @ApiPropertyOptional({
-    description: 'ID de transacción del proveedor de pago',
-    example: 'QR-123456789',
-  })
-  @IsOptional()
+  @ApiProperty({ description: 'Nombre para la factura', required: false, example: 'Juan Pérez' })
   @IsString()
-  paymentId?: string;
-
-  @ApiPropertyOptional({
-    description: 'Metadata adicional del pago',
-    example: { qrProvider: 'Stripe', currency: 'BOB' },
-  })
   @IsOptional()
-  @IsObject()
-  metadata?: Record<string, any>;
+  @MaxLength(150)
+  billName?: string;
+
+  @ApiProperty({ description: 'NIT para la factura', required: false, example: '123456789' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  billNit?: string;
+
+  @ApiProperty({ description: 'Email para la factura', required: false, example: 'cliente@email.com' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(150)
+  email?: string;
+
+  @ApiProperty({ description: 'Concepto del pago', required: false, default: 'Recarga de créditos' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  concept?: string;
 }
