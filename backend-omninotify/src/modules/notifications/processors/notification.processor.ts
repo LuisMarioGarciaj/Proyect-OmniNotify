@@ -6,12 +6,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { v4 as uuidv4 } from 'uuid';
 
 import {
   SendNotificationDto,
   NotificationChannel,
 } from '../dto/send-notification.dto';
 import { ScheduledNotification } from '../entities/scheduled-notification.entity';
+import { ScheduledNotificationStatus } from '../entities/scheduled-notification.entity';
 import {
   NotificationLog,
   NotificationLogStatus,
@@ -29,21 +31,84 @@ import { Provider } from '../../providers/entities/provider.entity';
 import {
   SystemConfigService,
 } from '../../system/services/system-config.service';
-
-// Importar módulo de créditos
 import { CreditsService } from '../../credits/credits.service';
 import { Company } from '../../companies/entities/company.entity';
 import { Channel as CreditsChannel } from '../../credits/entities/channel-cost.entity';
 import { NotificationChannel as CreditsNotificationChannel } from '../../credits/entities/credit-transaction.entity';
 
-// Tipo extendido para datos procesados (content es requerido)
+// Tipo extendido para datos procesados
 type ProcessedNotificationDto = SendNotificationDto & {
-  content: string; // Hacemos content requerido después del procesamiento
+  content: string;
+  processedSubject?: string;
 };
 
 @Processor('notifications')
 export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);
+
+  // Mapas para reemplazo de variables
+  private readonly WORD_TO_VARIABLE: Record<string, string> = {
+    'nombre': 'nombre',
+    'Nombre': 'nombre',
+    'name': 'nombre',
+    '👤': 'nombre',
+    'email': 'email',
+    'Email': 'email',
+    'correo': 'email',
+    '📧': 'email',
+    'teléfono': 'telefono',
+    'telefono': 'telefono',
+    'phone': 'telefono',
+    'celular': 'telefono',
+    '📱': 'telefono',
+    'empresa': 'empresa',
+    'Empresa': 'empresa',
+    'company': 'empresa',
+    '🏢': 'empresa',
+    'fecha': 'fecha',
+    'Fecha': 'fecha',
+    'date': 'fecha',
+    '📅': 'fecha',
+    'hora': 'hora',
+    'Hora': 'hora',
+    'time': 'hora',
+    '⏰': 'hora',
+    'sitio': 'sitioWeb',
+    'web': 'sitioWeb',
+    'website': 'sitioWeb',
+    '🌐': 'sitioWeb',
+    'mensaje': 'mensajeNotificacion',
+    'Mensaje': 'mensajeNotificacion',
+    'message': 'mensajeNotificacion',
+    'notificación': 'mensajeNotificacion',
+    'monto': 'monto',
+    'Monto': 'monto',
+    'amount': 'monto',
+    'precio': 'monto',
+    '💰': 'monto',
+    'factura': 'numeroFactura',
+    'Factura': 'numeroFactura',
+    'invoice': 'numeroFactura',
+    '🧾': 'numeroFactura',
+    'límite': 'fechaLimite',
+    'limite': 'fechaLimite',
+    'deadline': 'fechaLimite',
+    '⏳': 'fechaLimite',
+  };
+
+  private readonly VARIABLE_TO_WORDS: Record<string, string[]> = {
+    'nombre': ['nombre', 'Nombre', 'NOMBRE', 'name', 'Name', '👤'],
+    'email': ['email', 'Email', 'EMAIL', 'correo', 'Correo', 'mail', '📧'],
+    'telefono': ['teléfono', 'telefono', 'Teléfono', 'Telefono', 'tel', 'phone', 'celular', '📱'],
+    'empresa': ['empresa', 'Empresa', 'company', 'compañía', '🏢'],
+    'fecha': ['fecha', 'Fecha', 'date', '📅'],
+    'hora': ['hora', 'Hora', 'time', '⏰'],
+    'sitioWeb': ['sitio web', 'Sitio Web', 'website', 'web', '🌐'],
+    'mensajeNotificacion': ['mensaje', 'Mensaje', 'message', 'notificación'],
+    'monto': ['monto', 'Monto', 'amount', 'precio', '💰'],
+    'numeroFactura': ['factura', 'Factura', 'invoice', '🧾'],
+    'fechaLimite': ['límite', 'limite', 'deadline', '⏳'],
+  };
 
   constructor(
     @InjectRepository(ScheduledNotification)
@@ -90,58 +155,73 @@ export class NotificationProcessor extends WorkerHost {
   }
 
   /**
-   * Mapea NotificationChannel del módulo de notificaciones a CreditsChannel
+   * 🔧 CORREGIDO: Reemplaza variables en el contenido
+   * Soporta formato {{variable}} y también palabras clave
    */
+  private replaceVariables(content: string, variables: Record<string, any>): string {
+    if (!content) return '';
+    if (!variables || Object.keys(variables).length === 0) return content;
+    
+    let result = content;
+    
+    // 🔥 PASO 1: Reemplazar {{variable}} con su valor
+    Object.entries(variables).forEach(([key, value]) => {
+      const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      result = result.replace(regex, value || '');
+    });
+    
+    // 🔥 PASO 2: Reemplazar palabras clave (opcional, según tu lógica)
+    Object.entries(variables).forEach(([key, value]) => {
+      if (value && this.VARIABLE_TO_WORDS[key]) {
+        this.VARIABLE_TO_WORDS[key].forEach(word => {
+          const wordRegex = new RegExp(`\\b${word}\\b`, 'g');
+          result = result.replace(wordRegex, value);
+        });
+      }
+    });
+    
+    return result;
+  }
+
   private mapToCreditsChannel(channel: NotificationChannel): CreditsChannel {
     const mapping: Record<NotificationChannel, CreditsChannel> = {
       [NotificationChannel.EMAIL]: CreditsChannel.EMAIL,
       [NotificationChannel.SMS]: CreditsChannel.SMS,
       [NotificationChannel.WHATSAPP]: CreditsChannel.WHATSAPP,
     };
-    
     return mapping[channel];
   }
 
-  /**
-   * Mapea NotificationChannel a CreditsNotificationChannel (para transacciones)
-   */
   private mapToCreditsNotificationChannel(channel: NotificationChannel): CreditsNotificationChannel {
     const mapping: Record<NotificationChannel, CreditsNotificationChannel> = {
       [NotificationChannel.EMAIL]: CreditsNotificationChannel.EMAIL,
       [NotificationChannel.SMS]: CreditsNotificationChannel.SMS,
       [NotificationChannel.WHATSAPP]: CreditsNotificationChannel.WHATSAPP,
     };
-    
     return mapping[channel];
   }
 
   async process(job: Job<SendNotificationDto>): Promise<any> {
     const { data } = job;
 
-    this.logger.log(
-      `📨 Procesando notificación ${data.channel} para: ${data.recipient}`,
-    );
+    this.logger.log(`📨 Procesando notificación ${data.channel} para: ${data.recipient}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      // 🔥 MAPEAR NOTIFICATIONCHANNEL A CREDITSCHANNEL
       const creditsChannel = this.mapToCreditsChannel(data.channel);
       const creditsNotificationChannel = this.mapToCreditsNotificationChannel(data.channel);
       
-      // 🔥 Verificar créditos suficientes
       const hasCredits = await this.creditsService.hasEnoughCredits(
         data.companyId,
-        creditsNotificationChannel, // Usar NotificationChannel para hasEnoughCredits
-        1, // recipientCount = 1
+        creditsNotificationChannel,
+        1,
       );
 
       if (!hasCredits) {
-        throw new Error(
-          `❌ Créditos insuficientes para ${data.channel}.`
-        );
+        throw new Error(`❌ Créditos insuficientes para ${data.channel}.`);
       }
 
       this.logger.log(`💰 Créditos suficientes`);
@@ -156,18 +236,15 @@ export class NotificationProcessor extends WorkerHost {
 
       await queryRunner.manager.save(notificationLog);
 
-      // 🔥 PASO CRÍTICO: Procesar el template y obtener el contenido final
+      // 🔥 PASO CRÍTICO: Procesar contenido con variables (CORREGIDO)
       const processedData = await this.processTemplateContent(data);
 
-      // Verificar que el contenido no esté vacío
       if (!processedData.content || processedData.content.trim() === '') {
         throw new Error('El contenido del mensaje no puede estar vacío');
       }
 
-      // Obtener costo por canal
       const costPerMessage = await this.creditsService.getChannelCost(creditsChannel);
       
-      // Obtener la compañía con bloqueo
       const company = await queryRunner.manager.findOne(Company, {
         where: { id: data.companyId },
         lock: { mode: 'pessimistic_write' },
@@ -180,22 +257,22 @@ export class NotificationProcessor extends WorkerHost {
       const balanceBefore = company.current_credits;
       const balanceAfter = balanceBefore - costPerMessage;
 
-      // Actualizar créditos de la compañía
       await queryRunner.manager.update(
         Company,
         { id: data.companyId },
         { current_credits: balanceAfter }
       );
 
-      this.logger.log(
-        `💰 Créditos descontados: ${costPerMessage} (Saldo anterior: ${balanceBefore}, Nuevo: ${balanceAfter})`,
-      );
+      this.logger.log(`💰 Créditos descontados: ${costPerMessage}`);
 
       let result;
 
       switch (data.channel) {
         case NotificationChannel.EMAIL:
-          result = await this.emailProvider.sendEmail(processedData);
+          result = await this.emailProvider.sendEmail({
+            ...processedData,
+            subject: processedData.subject || 'Notificación de OmniNotify',
+          });
           break;
 
         case NotificationChannel.SMS:
@@ -213,26 +290,9 @@ export class NotificationProcessor extends WorkerHost {
       notificationLog.status = NotificationLogStatus.SENT;
       await queryRunner.manager.save(notificationLog);
 
-      if (data.scheduledAt) {
-        const scheduled = await this.scheduledNotificationRepository.findOne({
-          where: { id: job.id },
-        });
-        if (scheduled) {
-          scheduled.status = 'SENT' as any;
-          await queryRunner.manager.save(scheduled);
-        }
-      }
-
       await queryRunner.commitTransaction();
 
-      // Disparar evento de créditos actualizados
       setTimeout(() => {
-        const event = new CustomEvent('credits-updated', {
-          detail: {
-            companyId: data.companyId,
-            credits: balanceAfter,
-          },
-        });
         (global as any).eventEmitter?.emit('credits-updated', {
           companyId: data.companyId,
           credits: balanceAfter,
@@ -273,12 +333,18 @@ export class NotificationProcessor extends WorkerHost {
   }
 
   /**
-   * Procesa el contenido del template y retorna un objeto con content asegurado
+   * 🔥 CORREGIDO Y MEJORADO: Procesa el contenido del template o usa contenido directo
+   * AHORA SIEMPRE reemplaza las variables en TODOS los casos
    */
   private async processTemplateContent(
     data: SendNotificationDto
   ): Promise<ProcessedNotificationDto> {
-    // Si hay templateId, intentamos obtener el template y reemplazar variables
+    let processedContent = data.content || '';
+    let processedSubject = data.subject;
+
+    this.logger.log(`📋 Procesando contenido para: ${data.channel}`);
+
+    // CASO 1: Tiene templateId
     if (data.templateId) {
       try {
         const template = await this.templatesService.findOne(
@@ -286,62 +352,77 @@ export class NotificationProcessor extends WorkerHost {
           data.companyId,
         );
         
-        let processedContent = template.content;
+        processedContent = template.content;
+        this.logger.log(`📋 Usando template por ID: ${template.name || data.templateId}`);
         
-        // Reemplazar variables si existen
-        if (data.variables && Object.keys(data.variables).length > 0) {
-          Object.keys(data.variables).forEach((key) => {
-            const placeholder = `{{${key}}}`;
-            const value = data.variables?.[key] || '';
-            processedContent = processedContent.replace(
-              new RegExp(placeholder, 'g'),
-              value
-            );
-          });
-        }
-        
-        this.logger.log(
-          `📝 Template procesado: ${template.name} (${processedContent.length} chars)`
-        );
-        
-        return {
-          ...data,
-          content: processedContent,
-        };
       } catch (error) {
-        this.logger.warn(
-          `⚠️ Template ${data.templateId} no encontrado, usando contenido directo`
-        );
-        // Si no se encuentra el template, usamos el contenido original
-        // Pero si no hay contenido original, lanzamos error
-        if (!data.content || data.content.trim() === '') {
+        this.logger.warn(`⚠️ Template ${data.templateId} no encontrado: ${error.message}`);
+        if (!data.content) {
           throw new Error(`Template ${data.templateId} no encontrado y no hay contenido alternativo`);
         }
-        return {
-          ...data,
-          content: data.content,
-        };
+        // Si hay fallback, usar contenido directo
+        processedContent = data.content;
+        this.logger.log(`📋 Usando contenido directo como fallback`);
       }
     }
     
-    // Si no hay templateId, aseguramos que haya contenido
-    if (!data.content || data.content.trim() === '') {
-      throw new Error('No se proporcionó template ni contenido para el mensaje');
+    // CASO 2: Tiene templateAlias
+    else if (data.templateAlias) {
+      try {
+        const templates = await this.templatesService.findAllByCompany(data.companyId);
+        const template = templates.find(t => t.alias === data.templateAlias);
+        
+        if (template) {
+          processedContent = template.content;
+          this.logger.log(`📋 Usando template por alias: ${data.templateAlias}`);
+        } else {
+          this.logger.warn(`⚠️ Template alias "${data.templateAlias}" no encontrado`);
+          // Mantener contenido original si existe
+        }
+      } catch (error) {
+        this.logger.warn(`⚠️ Error buscando template por alias: ${error.message}`);
+      }
     }
     
-    // Devolver los datos originales con content asegurado
+    // CASO 3: Contenido directo (sin template)
+    else {
+      this.logger.log(`📋 Usando contenido directo (sin template)`);
+    }
+
+    // 🔥 PASO CRÍTICO: SIEMPRE reemplazar variables si existen (CORREGIDO)
+    if (data.variables && Object.keys(data.variables).length > 0) {
+      this.logger.log(`🔄 Reemplazando variables: ${JSON.stringify(data.variables)}`);
+      
+      // Reemplazar en el contenido
+      const contentBefore = processedContent.substring(0, 100);
+      processedContent = this.replaceVariables(processedContent, data.variables);
+      
+      // Reemplazar en el asunto si tiene variables
+      if (processedSubject && processedSubject.includes('{{')) {
+        processedSubject = this.replaceVariables(processedSubject, data.variables);
+      }
+      
+      this.logger.log(`✅ Contenido antes: "${contentBefore}..."`);
+      this.logger.log(`✅ Contenido después: "${processedContent.substring(0, 100)}..."`);
+    } else {
+      this.logger.log(`📝 Sin variables para reemplazar`);
+    }
+    
+    // Validar que hay contenido
+    if (!processedContent || processedContent.trim() === '') {
+      throw new Error('El contenido del mensaje no puede estar vacío');
+    }
+    
+    // Retornar datos procesados
     return {
       ...data,
-      content: data.content,
+      content: processedContent,
+      subject: processedSubject || data.subject,
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // WHATSAPP
-  // ═══════════════════════════════════════════════════════════════
-
   private async processWhatsapp(
-    data: ProcessedNotificationDto, // Usamos el tipo procesado
+    data: ProcessedNotificationDto,
     job: Job,
   ): Promise<any> {
     this.logger.log(`💬 Procesando WhatsApp Nexo para: ${data.recipient}`);
@@ -349,14 +430,10 @@ export class NotificationProcessor extends WorkerHost {
     const companyConfig = await this.getCompanyWhatsappConfig(data.companyId);
 
     if (!companyConfig || !companyConfig.token) {
-      throw new Error(
-        `❌ Configuración de Nexo no encontrada para empresa ${data.companyId}`,
-      );
+      throw new Error(`❌ Configuración de Nexo no encontrada para empresa ${data.companyId}`);
     }
 
-    // El contenido ya viene procesado de processTemplateContent()
     const mensaje = data.content;
-
     const nexoPayload: any = {
       para: data.recipient,
       mensaje: mensaje,
@@ -365,9 +442,7 @@ export class NotificationProcessor extends WorkerHost {
     if (data.attachments && data.attachments.length > 0) {
       const attachment = data.attachments[0];
 
-      this.logger.log(
-        `📎 Procesando adjunto: ${attachment.fileName || 'sin-nombre'} (${attachment.type})`,
-      );
+      this.logger.log(`📎 Procesando adjunto: ${attachment.fileName || 'sin-nombre'} (${attachment.type})`);
 
       try {
         const base64Data = await this.downloadAndConvertToBase64(attachment.url);
@@ -382,14 +457,10 @@ export class NotificationProcessor extends WorkerHost {
           nexoPayload.mensaje = attachment.caption;
         }
 
-        this.logger.log(
-          `✅ Adjunto listo: "${fileName}" (${base64Data.length} chars base64)`,
-        );
+        this.logger.log(`✅ Adjunto listo: "${fileName}" (${base64Data.length} chars base64)`);
       } catch (error: any) {
         this.logger.error(`❌ Error procesando adjunto: ${error.message}`);
-        throw new Error(
-          `No se pudo procesar el archivo adjunto: ${error.message}`,
-        );
+        throw new Error(`No se pudo procesar el archivo adjunto: ${error.message}`);
       }
     }
     else if (data.variables?.b64) {
@@ -469,9 +540,7 @@ export class NotificationProcessor extends WorkerHost {
       const buffer = Buffer.from(response.data);
       const base64 = buffer.toString('base64');
 
-      this.logger.log(
-        `✅ Descargado: ${buffer.length} bytes → ${base64.length} chars base64`,
-      );
+      this.logger.log(`✅ Descargado: ${buffer.length} bytes → ${base64.length} chars base64`);
 
       return base64;
     } catch (error: any) {
@@ -480,23 +549,15 @@ export class NotificationProcessor extends WorkerHost {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // SMS
-  // ═══════════════════════════════════════════════════════════════
-
   private async processSms(
     data: ProcessedNotificationDto,
     job: Job,
   ): Promise<any> {
     this.logger.log(`📱 Procesando SMS para: ${data.recipient}`);
 
-    // 🔥 PASO 1: OBTENER CONFIGURACIÓN DEL PROVEEDOR DESDE LOS DATOS DEL JOB
-    // Buscar en variables si viene el proveedor seleccionado
-    const provider = data.variables?.provider || 'vonage'; // Por defecto vonage si no se especifica
-    
+    const provider = data.variables?.provider || 'vonage';
     this.logger.log(`📱 Proveedor seleccionado: ${provider}`);
 
-    // 🔥 PASO 2: OBTENER CREDENCIALES SEGÚN EL PROVEEDOR
     let smsConfig: SMSConfig = {
       provider: provider as 'vonage' | 'twilio',
     };
@@ -516,7 +577,6 @@ export class NotificationProcessor extends WorkerHost {
         this.logger.log('📦 Usando credenciales globales de Twilio');
       }
 
-      // 🔥 PASO 3: PREPARAR PAYLOAD
       const text = data.content;
 
       const smsPayload: SMSContent = {
@@ -525,7 +585,6 @@ export class NotificationProcessor extends WorkerHost {
         from: smsConfig.fromNumber,
       };
 
-      // 🔥 PASO 4: ENVIAR
       const result = await this.smsProvider.send(smsConfig, smsPayload);
 
       this.logger.log(`✅ SMS enviado a ${data.recipient} vía ${provider}`);
@@ -540,10 +599,6 @@ export class NotificationProcessor extends WorkerHost {
       throw error;
     }
   }
-
-  // ═══════════════════════════════════════════════════════════════
-  // CONFIG HELPERS
-  // ═══════════════════════════════════════════════════════════════
 
   private async getCompanyWhatsappConfig(companyId: string): Promise<any> {
     const NEXO_WHATSAPP_PROVIDER_ID = 1;
@@ -570,9 +625,7 @@ export class NotificationProcessor extends WorkerHost {
       });
 
       if (!companyConfig) {
-        throw new Error(
-          `Empresa ${companyId} no tiene configuración de Nexo WhatsApp. `,
-        );
+        throw new Error(`Empresa ${companyId} no tiene configuración de Nexo WhatsApp.`);
       }
 
       const token = companyConfig.config?.token;

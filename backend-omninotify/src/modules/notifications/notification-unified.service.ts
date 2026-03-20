@@ -1,4 +1,3 @@
-// src/modules/notifications/notification-unified.service.ts
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -9,6 +8,7 @@ import { Template } from '../templates/entities/template.entity';
 import { ScheduledNotification } from './entities/scheduled-notification.entity';
 import { NotificationLog } from './entities/notification-log.entity';
 import { ScheduledNotificationStatus } from './entities/scheduled-notification.entity';
+import { SendNotificationResponseDto } from './dto/send-notification.dto';
 
 @Injectable()
 export class NotificationUnifiedService {
@@ -30,26 +30,22 @@ export class NotificationUnifiedService {
 
   /**
    * 🎯 MÉTODO PRINCIPAL UNIFICADO
-   * 
-   * Decide automáticamente:
-   * - Si is_scheduled = true → guarda en SCHEDULED_NOTIFICATION y encola con delay
-   * - Si is_scheduled = false → encola directo para envío inmediato
-   * 
-   * El worker (NotificationProcessor) se encarga de:
-   * - Guardar en NOTIFICATION_LOGS
-   * - Enviar por el canal correspondiente (Email, SMS, WhatsApp)
-   * - Procesar adjuntos si existen (descargar y convertir a base64)
    */
-  async send(companyId: string, dto: SendUnifiedNotificationDto) {
+  async send(companyId: string, dto: SendUnifiedNotificationDto): Promise<SendNotificationResponseDto> {
     this.logger.log(`📨 Enviando notificación: ${dto.channel} → ${dto.recipient}`);
 
-    // 1️⃣ Resolver template (por alias o ID)
+    // 1️⃣ Validar que tenga template O contenido directo
+    if (!dto.templateAlias && !dto.templateId && !dto.content) {
+      throw new BadRequestException('Debes proporcionar templateAlias, templateId o content');
+    }
+
+    // 2️⃣ Resolver template (si existe)
     const template = await this.resolveTemplate(companyId, dto);
 
-    // 2️⃣ Validar destinatario según canal
+    // 3️⃣ Validar destinatario según canal
     this.validateRecipient(dto.channel, dto.recipient);
 
-    // 3️⃣ Validar adjuntos (solo WhatsApp puede tener adjuntos)
+    // 4️⃣ Validar adjuntos (solo WhatsApp puede tener adjuntos)
     if (dto.attachments && dto.attachments.length > 0) {
       if (dto.channel !== 'WHATSAPP') {
         throw new BadRequestException(
@@ -57,7 +53,6 @@ export class NotificationUnifiedService {
         );
       }
       
-      // Nexo API solo soporta 1 archivo a la vez
       if (dto.attachments.length > 1) {
         this.logger.warn(
           `⚠️ Se enviaron ${dto.attachments.length} adjuntos, pero Nexo solo soporta 1. Se usará el primero.`
@@ -65,14 +60,12 @@ export class NotificationUnifiedService {
       }
     }
 
-    // 4️⃣ Decidir: ¿Es programado o inmediato?
+    // 5️⃣ Decidir: ¿Es programado o inmediato?
     const isScheduled = dto.scheduling?.is_scheduled === true && dto.scheduling?.send_at;
 
     if (isScheduled) {
-      // ✅ PROGRAMADO → Guardar en SCHEDULED_NOTIFICATION
       return this.scheduleNotification(companyId, template, dto);
     } else {
-      // ✅ INMEDIATO → Encolar directo
       return this.sendImmediate(companyId, template, dto);
     }
   }
@@ -82,12 +75,18 @@ export class NotificationUnifiedService {
   // ═════════════════════════════════════════════════════════════════════════
 
   /**
-   * 🔍 Resolver template por alias O por ID (compatible)
+   * 🔍 Resolver template por alias O por ID (si existe)
+   * 🔥 AHORA PERMITE QUE SEA NULL SI HAY CONTENIDO DIRECTO
    */
   private async resolveTemplate(
     companyId: string, 
     dto: SendUnifiedNotificationDto
-  ): Promise<Template> {
+  ): Promise<Template | null> {
+    // Si tiene contenido directo y no tiene template, retorna null
+    if (dto.content && !dto.templateAlias && !dto.templateId) {
+      return null;
+    }
+
     let template: Template | null = null;
 
     // Opción 1: Buscar por alias (recomendado)
@@ -121,11 +120,6 @@ export class NotificationUnifiedService {
         );
       }
     } 
-    else {
-      throw new BadRequestException(
-        'Debes proporcionar templateAlias o templateId'
-      );
-    }
 
     return template;
   }
@@ -161,9 +155,9 @@ export class NotificationUnifiedService {
    */
   private async scheduleNotification(
     companyId: string,
-    template: Template,
+    template: Template | null,
     dto: SendUnifiedNotificationDto,
-  ) {
+  ): Promise<SendNotificationResponseDto> {
     const scheduledAt = new Date(dto.scheduling!.send_at!);
     const now = new Date();
 
@@ -171,37 +165,53 @@ export class NotificationUnifiedService {
       throw new BadRequestException('La fecha de programación debe ser futura');
     }
 
-    // Guardar en tabla SCHEDULED_NOTIFICATION
-    const scheduled = this.scheduledRepo.create({
+    // 🔥 Preparar datos para guardar - SIN templateId si template es null
+    const scheduledData: Partial<ScheduledNotification> = {
       companyId: companyId,
-      templateId: template.id,
       channel: dto.channel,
       recipient: dto.recipient,
       variables: dto.variables || {},
       scheduledAt: scheduledAt,
       status: ScheduledNotificationStatus.SCHEDULED,
-    });
+    };
 
-    await this.scheduledRepo.save(scheduled);
+    // Solo agregar templateId si existe template
+    if (template) {
+      scheduledData.templateId = template.id;
+    }
 
-    // Calcular delay hasta la fecha programada
+    const scheduled = this.scheduledRepo.create(scheduledData);
+    const savedScheduled = await this.scheduledRepo.save(scheduled);
+
     const delay = scheduledAt.getTime() - now.getTime();
     
-    // Encolar con delay
-    await this.notificationQueue.add(
+    // 🔥 Preparar datos para el job
+    const jobData: any = {
+      scheduledNotificationId: savedScheduled.id,
+      companyId,
+      channel: dto.channel,
+      recipient: dto.recipient,
+      variables: dto.variables || {},
+      attachments: dto.attachments || [],
+      metadata: dto.metadata || {},
+    };
+
+    // Solo agregar templateId si existe template
+    if (template) {
+      jobData.templateId = template.id;
+    }
+
+    // Agregar contenido directo si no hay template
+    if (!template && dto.content) {
+      jobData.content = dto.content;
+      if (dto.subject) jobData.subject = dto.subject;
+    }
+
+    const job = await this.notificationQueue.add(
       'send-notification',
+      jobData,
       {
-        scheduledNotificationId: scheduled.id, // ✅ Para actualizar el estado después
-        companyId,
-        templateId: template.id,
-        channel: dto.channel,
-        recipient: dto.recipient,
-        variables: dto.variables || {},
-        attachments: dto.attachments || [], // ✅ Adjuntos
-        metadata: dto.metadata || {},
-      },
-      {
-        delay, // Milisegundos hasta el envío
+        delay,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
       },
@@ -213,11 +223,13 @@ export class NotificationUnifiedService {
       success: true,
       message: 'Notificación programada exitosamente',
       data: {
-        id: scheduled.id,
-        channel: dto.channel,
+        id: savedScheduled.id,
+        jobId: job.id as string,
         recipient: dto.recipient,
+        channel: dto.channel,
+        companyId: companyId,
+        status: 'scheduled',
         scheduledAt: scheduledAt.toISOString(),
-        status: 'SCHEDULED',
         hasAttachments: (dto.attachments?.length ?? 0) > 0,
       },
     };
@@ -225,26 +237,36 @@ export class NotificationUnifiedService {
 
   /**
    * 🚀 Envío inmediato (encolar sin guardar en BD aún)
-   * 
-   * El log se guardará en NOTIFICATION_LOGS cuando el worker procese el job
    */
   private async sendImmediate(
     companyId: string,
-    template: Template,
+    template: Template | null,
     dto: SendUnifiedNotificationDto,
-  ) {
-    // Encolar para envío inmediato (sin delay)
+  ): Promise<SendNotificationResponseDto> {
+    // 🔥 Preparar datos para el job
+    const jobData: any = {
+      companyId: companyId,
+      channel: dto.channel,
+      recipient: dto.recipient,
+      variables: dto.variables || {},
+      attachments: dto.attachments || [],
+      metadata: dto.metadata || {},
+    };
+
+    // Solo agregar templateId si existe template
+    if (template) {
+      jobData.templateId = template.id;
+    }
+
+    // Agregar contenido directo si no hay template
+    if (!template && dto.content) {
+      jobData.content = dto.content;
+      if (dto.subject) jobData.subject = dto.subject;
+    }
+
     const job = await this.notificationQueue.add(
       'send-notification',
-      {
-        companyId,
-        templateId: template.id,
-        channel: dto.channel,
-        recipient: dto.recipient,
-        variables: dto.variables || {},
-        attachments: dto.attachments || [], // ✅ Adjuntos
-        metadata: dto.metadata || {},
-      },
+      jobData,
       {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
@@ -257,10 +279,11 @@ export class NotificationUnifiedService {
       success: true,
       message: 'Notificación encolada para envío inmediato',
       data: {
-        jobId: job.id,
-        channel: dto.channel,
+        jobId: job.id as string,
         recipient: dto.recipient,
-        status: 'QUEUED',
+        channel: dto.channel,
+        companyId: companyId,
+        status: 'queued',
         hasAttachments: (dto.attachments?.length ?? 0) > 0,
       },
     };

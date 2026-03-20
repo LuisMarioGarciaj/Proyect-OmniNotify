@@ -1,7 +1,6 @@
-// src/modules/notifications/dto/send-unified.dto.ts
 import { 
   IsEnum, IsString, IsOptional, IsObject, IsUrl, IsIn,
-  ValidateIf, IsISO8601, IsArray, ValidateNested 
+  ValidateIf, IsISO8601, IsArray, ValidateNested, IsBoolean 
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -18,6 +17,7 @@ export class SchedulingDto {
     description: '¿Es programado?',
     example: false 
   })
+  @IsBoolean()
   @IsOptional()
   is_scheduled?: boolean;
 
@@ -152,6 +152,26 @@ export class SendUnifiedNotificationDto {
   @IsOptional()
   @IsString()
   templateId?: string;
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // CONTENIDO DIRECTO (sin template) - NUEVOS CAMPOS
+  // ═════════════════════════════════════════════════════════════════════════
+  
+  @ApiPropertyOptional({ 
+    description: 'Contenido directo del mensaje (HTML para EMAIL, texto plano para SMS/WHATSAPP)',
+    example: '<h1>¡Hola {{nombre}}!</h1><p>Bienvenido a {{empresa}}</p>'
+  })
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @ApiPropertyOptional({ 
+    description: 'Asunto del email (solo para canal EMAIL)',
+    example: 'Bienvenido a nuestra plataforma'
+  })
+  @IsOptional()
+  @IsString()
+  subject?: string;
 
   // ═════════════════════════════════════════════════════════════════════════
   // Variables para reemplazar en el template: {{ name }}, {{ orderNumber }}

@@ -1,4 +1,3 @@
-// frontend_omninitify/src/services/credits.service.ts
 import { api } from './api';
 
 export interface BalanceResponse {
@@ -28,13 +27,35 @@ export interface VerifyResponse {
   paidAt?: string;
   credits: number;
   amount: number;
+  message?: string;
+}
+
+export interface RechargeHistoryItem {
+  id: string;
+  paymethod: 'QR' | 'CARD' | 'STRIKE';
+  transactionId: string;
+  qrId?: string;
+  amount: number;
+  credits: number;
+  qrStatus: 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED';
+  paymentStatus: 'PENDING' | 'PAID' | 'EXPIRED' | 'FAILED';
+  createdAt: string;
+  paidAt?: string;
+  expiresAt?: string;
 }
 
 export interface RechargeHistoryResponse {
   total: number;
   limit: number;
   offset: number;
-  data: RechargeResponse[];
+  data: RechargeHistoryItem[];
+}
+
+export interface QrImageResponse {
+  qrImage: string;
+  expiresAt: string;
+  amount: number;
+  credits: number;
 }
 
 export interface PurchaseCreditsDto {
@@ -84,7 +105,6 @@ class CreditsService {
 
   /**
    * Obtener saldo actual de créditos para una empresa específica
-   * @param companyId ID de la empresa (obligatorio)
    */
   async getBalance(companyId: string): Promise<BalanceResponse> {
     try {
@@ -107,8 +127,6 @@ class CreditsService {
   async purchaseCredits(data: PurchaseCreditsDto): Promise<RechargeResponse> {
     try {
       console.log('💰 CreditsService: purchaseCredits - data:', data);
-      
-      // 🔥 VERIFICAR QUE ES UNA PETICIÓN POST
       console.log('📡 Enviando POST a:', `${this.baseUrl}/purchase`);
       
       const response = await api.post(`${this.baseUrl}/purchase`, data);
@@ -199,14 +217,32 @@ class CreditsService {
   /**
    * Obtener historial de recargas
    */
-  async getRechargeHistory(limit: number = 20, offset: number = 0): Promise<RechargeHistoryResponse> {
+  async getRechargeHistory(companyId: string, limit: number = 20, offset: number = 0): Promise<RechargeHistoryResponse> {
     try {
-      const response = await api.get(`${this.baseUrl}/history?limit=${limit}&offset=${offset}`);
-      console.log('💰 CreditsService: getRechargeHistory response:', response);
+      console.log(`📜 CreditsService: Solicitando historial para companyId: ${companyId}`);
+      
+      const response = await api.get(`${this.baseUrl}/history?companyId=${companyId}&limit=${limit}&offset=${offset}`);
+      
+      console.log('📜 CreditsService: Historial recibido:', response);
       
       return response as RechargeHistoryResponse;
     } catch (error) {
       console.error('❌ CreditsService: Error en getRechargeHistory:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 🔥 Obtener imagen de QR por ID de recarga
+   */
+  async getQrImage(rechargeId: string): Promise<QrImageResponse> {
+    try {
+      console.log(`📸 CreditsService: Obteniendo QR para recarga: ${rechargeId}`);
+      const response = await api.get(`${this.baseUrl}/qr/${rechargeId}`);
+      console.log('📸 QR obtenido:', response);
+      return response as QrImageResponse;
+    } catch (error) {
+      console.error('❌ CreditsService: Error obteniendo QR:', error);
       throw error;
     }
   }
@@ -222,7 +258,6 @@ class CreditsService {
       return response as ChannelCostResponse;
     } catch (error) {
       console.error(`❌ CreditsService: Error en getChannelCost(${channel}):`, error);
-      // Retornar valor por defecto en caso de error
       return {
         channel,
         cost: channel === 'SMS' ? 2 : 1

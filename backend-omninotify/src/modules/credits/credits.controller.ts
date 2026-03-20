@@ -1,4 +1,3 @@
-// backend-omninotify/src/modules/credits/credits.controller.ts
 import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
@@ -32,7 +31,6 @@ export class CreditsController {
   @ApiResponse({ status: 401, description: 'No autorizado' })
   @ApiResponse({ status: 404, description: 'Empresa no encontrada' })
   async getBalance(@Request() req, @Query('companyId') companyId?: string): Promise<BalanceResponseDto> {
-    // 🔥 Prioridad: usar companyId del query param o del usuario autenticado
     const finalCompanyId = companyId || req.user?.company_id;
     
     console.log('📡 GET /credits/balance - companyId:', finalCompanyId);
@@ -169,6 +167,25 @@ export class CreditsController {
   }
 
   /**
+   * 🔥 Obtener imagen de QR por ID de recarga
+   */
+  @Get('qr/:rechargeId')
+  @ApiOperation({ summary: 'Obtener imagen de QR por ID de recarga' })
+  async getQrImage(
+    @Request() req,
+    @Param('rechargeId') rechargeId: string
+  ): Promise<{ qrImage: string; expiresAt: Date; amount: number; credits: number }> {
+    const companyId = req.user?.company_id;
+    console.log('📡 GET /credits/qr/:rechargeId - companyId:', companyId, 'rechargeId:', rechargeId);
+    
+    if (!companyId) {
+      throw new BadRequestException('Usuario no tiene empresa asociada');
+    }
+    
+    return this.creditsService.getQrImage(companyId, rechargeId);
+  }
+
+  /**
    * Obtener costo por canal
    */
   @Get('channel-cost/:channel')
@@ -193,5 +210,32 @@ export class CreditsController {
     console.log('📡 POST /credits/yopago-webhook - body:', body);
     await this.creditsService.handleYopagoWebhook(body);
     return { received: true };
+  }
+
+  /**
+   * Callback de Yopago - Confirma pago exitoso
+   */
+  @Post('yopago-callback')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Callback de Yopago - Confirma pago exitoso' })
+  async yopagoCallback(@Body() body: any) {
+    console.log('📡 [YOPAGO CALLBACK] Recibida confirmación de pago:');
+    console.log('📦 Body completo:', JSON.stringify(body, null, 2));
+    
+    if (!body.transactionId && !body.transaction_id) {
+      console.error('❌ [YOPAGO CALLBACK] Faltan datos requeridos');
+      return { 
+        success: false, 
+        message: 'Faltan datos requeridos: transactionId' 
+      };
+    }
+
+    const result = await this.creditsService.processPaymentConfirmation(body);
+    
+    return {
+      success: true,
+      message: 'Pago procesado correctamente',
+      data: result
+    };
   }
 }

@@ -20,6 +20,7 @@ export class CreditsService {
   private readonly yopagoApiUrl: string;
   private readonly successUrl: string;
   private readonly failedUrl: string;
+  private readonly TIMEZONE_OFFSET = -4; // Bolivia GMT-4
 
   // Mapeo de códigos de empresa según el ID de compañía
   private readonly companyCodeMap: Record<string, string> = {
@@ -53,18 +54,18 @@ export class CreditsService {
     
     if (!companyId) {
       this.logger.error('❌ companyId es undefined en getCompanyCode');
-      return 'WU59-YZ4B-BCP2-M38Y'; // Código por defecto
+      return 'WU59-YZ4B-BCP2-M38Y';
     }
     
     if (companyId === 'undefined' || companyId === 'null') {
       this.logger.error(`❌ companyId es el string "${companyId}" en getCompanyCode`);
-      return 'WU59-YZ4B-BCP2-M38Y'; // Código por defecto
+      return 'WU59-YZ4B-BCP2-M38Y';
     }
     
     const code = this.companyCodeMap[companyId];
     if (!code) {
       this.logger.warn(`No se encontró código de empresa para companyId: ${companyId}, usando código por defecto`);
-      return 'WU59-YZ4B-BCP2-M38Y'; // Código por defecto
+      return 'WU59-YZ4B-BCP2-M38Y';
     }
     return code;
   }
@@ -83,6 +84,41 @@ export class CreditsService {
     return Math.floor(Math.random() * 1000000).toString();
   }
 
+  /**
+   * 🔥 Convertir fecha de Yopago (UTC) a hora local de Bolivia
+   * @param dateString Fecha en formato "YYYY-MM-DD HH:MM:SS" (UTC)
+   * @returns Date ajustado a Bolivia (GMT-4)
+   */
+ /**
+ * 🔥 Convertir fecha de Yopago (UTC) a hora local de Bolivia
+ * @param dateString Fecha en formato "YYYY-MM-DD HH:MM:SS" (UTC)
+ * @returns Date ajustado a Bolivia (GMT-4)
+ */
+private parseYopagoDate(dateString: string): Date | null {
+  if (!dateString) return null;
+  
+  try {
+    // Parsear "2026-03-15 19:38:49" (hora Bolivia que recibimos)
+    const [datePart, timePart] = dateString.split(' ');
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute, second] = timePart.split(':').map(Number);
+    
+    // Crear fecha como si fuera UTC (para que MySQL no la convierta)
+    // Así evitamos la doble conversión
+    const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    
+    console.log('📅 Enviando UTC a MySQL:', {
+      original: dateString,
+      utcString: utcDate.toISOString(),
+      mysqlFormat: utcDate.toISOString().slice(0, 19).replace('T', ' ')
+    });
+    
+    return utcDate;
+  } catch (error) {
+    this.logger.error(`Error parseando fecha: ${dateString}`, error);
+    return null;
+  }
+}
   /**
    * Obtener saldo actual de una empresa
    */
@@ -142,10 +178,10 @@ export class CreditsService {
     recharge.qrStatus = QrStatus.PENDING;
     recharge.paymentStatus = PaymentStatus.PENDING;
     
-    // Fecha de expiración: 1 día después
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 1);
-    recharge.expiresAt = expiresAt;
+    // Fecha de expiración por defecto (24h)
+    const defaultExpiresAt = new Date();
+    defaultExpiresAt.setDate(defaultExpiresAt.getDate() + 1);
+    recharge.expiresAt = defaultExpiresAt;
 
     let yopagoResponse: any;
 
@@ -179,7 +215,6 @@ export class CreditsService {
 
         console.log('📥 Respuesta de Yopago:', response.data);
 
-        // Yopago devuelve status: 0 para éxito
         if (response.data.status !== 0) {
           throw new BadRequestException(response.data.message || 'Error al generar QR');
         }
@@ -187,10 +222,13 @@ export class CreditsService {
         yopagoResponse = response.data;
         recharge.transactionId = yopagoResponse.transactionId;
         recharge.qrId = yopagoResponse.qrId;
+        recharge.qrImage = yopagoResponse.qr; // Guardar imagen del QR
         
-        console.log('✅ QR generado exitosamente:', { 
+        // 🔥 PARA QR: Yopago NO devuelve fechas al generar, usamos 24h
+        console.log('✅ QR generado (expira en 24h):', { 
           transactionId: yopagoResponse.transactionId, 
-          qrId: yopagoResponse.qrId 
+          qrId: yopagoResponse.qrId,
+          expiresAt: recharge.expiresAt
         });
         
       } else if (purchaseDto.method === PurchaseMethod.CARD) {
@@ -222,13 +260,30 @@ export class CreditsService {
 
         console.log('📥 Respuesta de Yopago:', response.data);
 
-        // Yopago devuelve status: 0 para éxito
         if (response.data.status !== 0) {
           throw new BadRequestException(response.data.message || 'Error al generar URL de pago');
         }
 
         yopagoResponse = response.data;
         recharge.transactionId = yopagoResponse.transactionId;
+        
+        // 🔥 PARA URL: Usar dateCreated y expireTime de Yopago
+        if (yopagoResponse.dateCreated && yopagoResponse.expireTime) {
+          const createdDate = this.parseYopagoDate(yopagoResponse.dateCreated);
+          if (createdDate) {
+            recharge.createdAt = createdDate;
+            
+            const expireMinutes = parseInt(yopagoResponse.expireTime);
+            const expireDate = new Date(createdDate.getTime() + (expireMinutes * 60 * 1000));
+            recharge.expiresAt = expireDate;
+            
+            console.log('📅 URL con fechas de Yopago:', {
+              dateCreated: yopagoResponse.dateCreated,
+              expireTime: yopagoResponse.expireTime,
+              expiresAt: expireDate
+            });
+          }
+        }
       } else {
         throw new BadRequestException('Método de pago no soportado');
       }
@@ -245,6 +300,7 @@ export class CreditsService {
           qrCode: yopagoResponse?.qr,
           amount: recharge.amount,
           credits: recharge.credits,
+          createdAt: recharge.createdAt,
           expiresAt: recharge.expiresAt,
           qrStatus: recharge.qrStatus,
           paymentStatus: recharge.paymentStatus,
@@ -256,6 +312,7 @@ export class CreditsService {
           paymentUrl: yopagoResponse?.paymentUrl,
           amount: recharge.amount,
           credits: recharge.credits,
+          createdAt: recharge.createdAt,
           expiresAt: recharge.expiresAt,
           paymentStatus: recharge.paymentStatus,
         };
@@ -267,6 +324,131 @@ export class CreditsService {
   }
 
   /**
+   * 🔥 Obtener la imagen de un QR específico
+   */
+  async getQrImage(companyId: string, rechargeId: string): Promise<{ 
+    qrImage: string; 
+    expiresAt: Date; 
+    amount: number; 
+    credits: number;
+    createdAt?: Date;
+  }> {
+    const recharge = await this.rechargeRepository.findOne({
+      where: { 
+        id: rechargeId,
+        companyId: companyId,
+        paymethod: PayMethod.QR
+      }
+    });
+
+    if (!recharge) {
+      throw new NotFoundException('QR no encontrado');
+    }
+
+    // Verificar expiración
+    if (recharge.expiresAt && new Date() > recharge.expiresAt) {
+      if (recharge.paymentStatus === PaymentStatus.PENDING) {
+        recharge.paymentStatus = PaymentStatus.EXPIRED;
+        recharge.qrStatus = QrStatus.EXPIRED;
+        await this.rechargeRepository.save(recharge);
+      }
+      throw new BadRequestException('El QR ha expirado');
+    }
+
+    if (!recharge.qrImage) {
+      throw new NotFoundException('La imagen del QR no está disponible');
+    }
+
+    return {
+      qrImage: recharge.qrImage,
+      expiresAt: recharge.expiresAt,
+      amount: recharge.amount,
+      credits: recharge.credits,
+      createdAt: recharge.createdAt
+    };
+  }
+
+  /**
+   * 🔥 Procesar confirmación de pago desde callback de Yopago
+   */
+  async processPaymentConfirmation(paymentData: any): Promise<any> {
+    console.log('💰 [PAYMENT CONFIRMATION] Procesando confirmación de pago:', paymentData);
+
+    const transactionId = paymentData.transactionId || paymentData.transaction_id;
+    
+    if (!transactionId) {
+      throw new BadRequestException('Se requiere transactionId');
+    }
+
+    const recharge = await this.rechargeRepository.findOne({
+      where: { 
+        transactionId: transactionId,
+        paymentStatus: PaymentStatus.PENDING 
+      }
+    });
+
+    if (!recharge) {
+      console.log(`⚠️ [PAYMENT CONFIRMATION] No se encontró recarga pendiente para transactionId: ${transactionId}`);
+      
+      const paidRecharge = await this.rechargeRepository.findOne({
+        where: { transactionId: transactionId }
+      });
+      
+      if (paidRecharge && paidRecharge.paymentStatus === PaymentStatus.PAID) {
+        console.log(`✅ [PAYMENT CONFIRMATION] La recarga ${transactionId} ya fue procesada anteriormente`);
+        return {
+          id: paidRecharge.id,
+          transactionId: paidRecharge.transactionId,
+          status: 'already_processed',
+          credits: paidRecharge.credits,
+          paidAt: paidRecharge.paidAt
+        };
+      }
+      
+      throw new NotFoundException(`No se encontró recarga pendiente con transactionId: ${transactionId}`);
+    }
+
+    if (recharge.paymentStatus === PaymentStatus.PAID) {
+      console.log(`⚠️ [PAYMENT CONFIRMATION] La recarga ${transactionId} ya está pagada`);
+      return {
+        id: recharge.id,
+        transactionId: recharge.transactionId,
+        status: 'already_paid',
+        credits: recharge.credits,
+        paidAt: recharge.paidAt
+      };
+    }
+
+    recharge.qrStatus = QrStatus.PAID;
+    recharge.paymentStatus = PaymentStatus.PAID;
+    recharge.paidAt = new Date();
+
+    await this.rechargeRepository.save(recharge);
+    
+    console.log(`✅ [PAYMENT CONFIRMATION] Recarga actualizada a PAID:`, {
+      id: recharge.id,
+      paidAt: recharge.paidAt
+    });
+
+    await this.processSuccessfulPayment(recharge);
+
+    const company = await this.companyRepository.findOne({
+      where: { id: recharge.companyId }
+    });
+
+    return {
+      id: recharge.id,
+      transactionId: recharge.transactionId,
+      companyId: recharge.companyId,
+      credits: recharge.credits,
+      amount: recharge.amount,
+      newBalance: company?.current_credits || 0,
+      paidAt: recharge.paidAt,
+      status: 'success'
+    };
+  }
+
+  /**
    * Verificar el estado de una recarga (QR)
    */
   async verifyQrRecharge(companyId: string, verifyDto: VerifyQrDto): Promise<any> {
@@ -275,7 +457,6 @@ export class CreditsService {
       throw new NotFoundException('Empresa no encontrada');
     }
 
-    // Buscar la recarga
     const recharge = await this.rechargeRepository.findOne({
       where: {
         transactionId: verifyDto.transactionId,
@@ -288,7 +469,6 @@ export class CreditsService {
       throw new NotFoundException('Recarga no encontrada');
     }
 
-    // Si ya está pagada, no volver a verificar
     if (recharge.paymentStatus === PaymentStatus.PAID) {
       return {
         id: recharge.id,
@@ -305,7 +485,6 @@ export class CreditsService {
     const companyCode = this.getCompanyCode(companyId);
 
     try {
-      // Verificar con Yopago
       const verifyRequest = {
         companyCode,
         transactionId: verifyDto.transactionId,
@@ -321,16 +500,12 @@ export class CreditsService {
 
       console.log('📥 Respuesta de verificación Yopago:', response.data);
 
-      // 🔥 CORREGIDO: Verificar la estructura correcta de la respuesta
       if (response.data.status !== 0) {
         throw new BadRequestException(response.data.message || 'Error al verificar QR');
       }
 
-      // 🔥 IMPORTANTE: Yopago puede devolver la información directamente en response.data
-      // o en response.data.data dependiendo del endpoint
       const yopagoData = response.data.data || response.data;
 
-      // Verificar si hay datos
       if (!yopagoData) {
         this.logger.warn('Respuesta de Yopago sin datos:', response.data);
         return {
@@ -346,31 +521,70 @@ export class CreditsService {
         };
       }
 
-      // 🔥 Actualizar según el estado devuelto por Yopago
-      const estado = yopagoData.status || yopagoData.estado || 'PENDING';
+      // 🔥 Guardar las fechas que Yopago devuelve en la verificación
+      let fechasActualizadas = false;
       
-      if (estado === 'PAID' || estado === 'PAGADO') {
+      if (yopagoData.dateCreated) {
+        const createdDate = this.parseYopagoDate(yopagoData.dateCreated);
+        if (createdDate) {
+          recharge.createdAt = createdDate;
+          fechasActualizadas = true;
+          console.log('📅 Actualizando createdAt desde verificación:', {
+            original: yopagoData.dateCreated,
+            convertida: createdDate
+          });
+        }
+      }
+
+      if (yopagoData.dateExpired) {
+        const expiredDate = this.parseYopagoDate(yopagoData.dateExpired);
+        if (expiredDate) {
+          recharge.expiresAt = expiredDate;
+          fechasActualizadas = true;
+          console.log('📅 Actualizando expiresAt desde verificación:', {
+            original: yopagoData.dateExpired,
+            convertida: expiredDate
+          });
+        }
+      }
+
+      if (fechasActualizadas) {
+        await this.rechargeRepository.save(recharge);
+      }
+
+      const estado = yopagoData.msgQr || yopagoData.status || yopagoData.estado || 'PENDING';
+      const estadoUpper = String(estado).toUpperCase();
+      
+      console.log(`📊 Estado detectado: ${estado} (${estadoUpper})`);
+
+      if (estadoUpper === 'APPROVED' || estadoUpper === 'PAID' || estadoUpper === 'PAGADO' || estadoUpper === 'COMPLETED') {
+        console.log('💰 Pago detectado como exitoso! Procesando...');
+        
         recharge.qrStatus = QrStatus.PAID;
         recharge.paymentStatus = PaymentStatus.PAID;
-        recharge.paidAt = yopagoData.paymentDate ? new Date(yopagoData.paymentDate) : new Date();
+        
+        if (yopagoData.dateCreated) {
+          recharge.paidAt = new Date(yopagoData.dateCreated);
+        } else {
+          recharge.paidAt = new Date();
+        }
         
         await this.rechargeRepository.save(recharge);
-        
-        // Procesar el pago exitoso
         await this.processSuccessfulPayment(recharge);
         
-      } else if (estado === 'EXPIRED' || estado === 'VENCIDO') {
+        console.log(`✅ Pago procesado exitosamente. Créditos acreditados: ${recharge.credits}`);
+        
+      } else if (estadoUpper === 'EXPIRED' || estadoUpper === 'VENCIDO') {
         recharge.qrStatus = QrStatus.EXPIRED;
         recharge.paymentStatus = PaymentStatus.EXPIRED;
         await this.rechargeRepository.save(recharge);
         
-      } else if (estado === 'CANCELLED' || estado === 'CANCELADO') {
+      } else if (estadoUpper === 'CANCELLED' || estadoUpper === 'CANCELADO' || estadoUpper === 'FAILED') {
         recharge.qrStatus = QrStatus.CANCELLED;
         recharge.paymentStatus = PaymentStatus.FAILED;
         await this.rechargeRepository.save(recharge);
         
       } else {
-        // Estado PENDING - no es error, solo informar
         this.logger.log(`QR pendiente para transacción: ${verifyDto.transactionId}`);
         
         return {
@@ -386,7 +600,6 @@ export class CreditsService {
         };
       }
 
-      // Devolver estado actualizado
       return {
         id: recharge.id,
         transactionId: recharge.transactionId,
@@ -401,7 +614,6 @@ export class CreditsService {
     } catch (error) {
       this.logger.error(`Error al verificar QR: ${error.message}`, error.stack);
       
-      // Si hay respuesta de error de Yopago, intentar extraer mensaje
       if (error.response?.data?.message) {
         return {
           id: recharge.id,
@@ -416,7 +628,6 @@ export class CreditsService {
         };
       }
       
-      // Si el error es por timeout o conexión, devolver estado actual
       return {
         id: recharge.id,
         transactionId: recharge.transactionId,
@@ -440,7 +651,6 @@ export class CreditsService {
       throw new NotFoundException('Empresa no encontrada');
     }
 
-    // Buscar la recarga
     const recharge = await this.rechargeRepository.findOne({
       where: {
         transactionId: verifyDto.transactionId,
@@ -453,7 +663,6 @@ export class CreditsService {
       throw new NotFoundException('Recarga no encontrada');
     }
 
-    // Si ya está pagada, no volver a verificar
     if (recharge.paymentStatus === PaymentStatus.PAID) {
       return {
         id: recharge.id,
@@ -468,7 +677,6 @@ export class CreditsService {
     const companyCode = this.getCompanyCode(companyId);
 
     try {
-      // Verificar con Yopago
       const verifyRequest = {
         companyCode,
         transactionId: verifyDto.transactionId,
@@ -483,7 +691,6 @@ export class CreditsService {
 
       console.log('📥 Respuesta de verificación Yopago:', response.data);
 
-      // Verificar estructura de respuesta
       if (response.data.status !== 0) {
         throw new BadRequestException(response.data.message || 'Error al verificar transferencia');
       }
@@ -503,19 +710,20 @@ export class CreditsService {
       }
 
       const estado = yopagoData.status || yopagoData.estado || 'PENDING';
+      const estadoUpper = String(estado).toUpperCase();
 
-      if (estado === 'PAID' || estado === 'PAGADO') {
+      if (estadoUpper === 'PAID' || estadoUpper === 'PAGADO' || estadoUpper === 'COMPLETED' || estadoUpper === 'APPROVED') {
         recharge.paymentStatus = PaymentStatus.PAID;
         recharge.paidAt = yopagoData.paymentDate ? new Date(yopagoData.paymentDate) : new Date();
         
         await this.rechargeRepository.save(recharge);
         await this.processSuccessfulPayment(recharge);
         
-      } else if (estado === 'EXPIRED' || estado === 'VENCIDO') {
+      } else if (estadoUpper === 'EXPIRED' || estadoUpper === 'VENCIDO') {
         recharge.paymentStatus = PaymentStatus.EXPIRED;
         await this.rechargeRepository.save(recharge);
         
-      } else if (estado === 'FAILED' || estado === 'FALLIDO') {
+      } else if (estadoUpper === 'FAILED' || estadoUpper === 'FALLIDO' || estadoUpper === 'CANCELLED') {
         recharge.paymentStatus = PaymentStatus.FAILED;
         await this.rechargeRepository.save(recharge);
         
@@ -569,12 +777,11 @@ export class CreditsService {
   }
 
   /**
-   * Procesar webhook de Yopago (llamada automática cuando cambia el estado)
+   * Procesar webhook de Yopago
    */
   async handleYopagoWebhook(body: any): Promise<void> {
     this.logger.log(`Webhook recibido de Yopago: ${JSON.stringify(body)}`);
 
-    // Buscar la recarga por transactionId
     const recharge = await this.rechargeRepository.findOne({
       where: { transactionId: body.transactionId },
     });
@@ -584,48 +791,52 @@ export class CreditsService {
       return;
     }
 
-    // Actualizar según el tipo de pago
     if (recharge.paymethod === PayMethod.QR) {
       if (body.qrId && body.qrId !== recharge.qrId) {
         this.logger.warn(`QR ID no coincide para transactionId: ${body.transactionId}`);
         return;
       }
 
-      if (body.status === 'PAID' || body.status === 'PAGADO') {
+      const estado = body.status || body.msgQr || 'PENDING';
+      const estadoUpper = String(estado).toUpperCase();
+
+      if (estadoUpper === 'PAID' || estadoUpper === 'PAGADO' || estadoUpper === 'APPROVED' || estadoUpper === 'COMPLETED') {
         recharge.qrStatus = QrStatus.PAID;
         recharge.paymentStatus = PaymentStatus.PAID;
-        if (body.paymentDate) {
-          recharge.paidAt = new Date(body.paymentDate);
+        if (body.paymentDate || body.dateCreated) {
+          recharge.paidAt = new Date(body.paymentDate || body.dateCreated);
         }
         await this.rechargeRepository.save(recharge);
         await this.processSuccessfulPayment(recharge);
         
-      } else if (body.status === 'EXPIRED' || body.status === 'VENCIDO') {
+      } else if (estadoUpper === 'EXPIRED' || estadoUpper === 'VENCIDO') {
         recharge.qrStatus = QrStatus.EXPIRED;
         recharge.paymentStatus = PaymentStatus.EXPIRED;
         await this.rechargeRepository.save(recharge);
         
-      } else if (body.status === 'CANCELLED' || body.status === 'CANCELADO') {
+      } else if (estadoUpper === 'CANCELLED' || estadoUpper === 'CANCELADO' || estadoUpper === 'FAILED') {
         recharge.qrStatus = QrStatus.CANCELLED;
         recharge.paymentStatus = PaymentStatus.FAILED;
         await this.rechargeRepository.save(recharge);
       }
       
     } else {
-      // Para pagos con tarjeta
-      if (body.status === 'PAID' || body.status === 'PAGADO') {
+      const estado = body.status || body.estado || 'PENDING';
+      const estadoUpper = String(estado).toUpperCase();
+
+      if (estadoUpper === 'PAID' || estadoUpper === 'PAGADO' || estadoUpper === 'APPROVED' || estadoUpper === 'COMPLETED') {
         recharge.paymentStatus = PaymentStatus.PAID;
-        if (body.paymentDate) {
-          recharge.paidAt = new Date(body.paymentDate);
+        if (body.paymentDate || body.dateCreated) {
+          recharge.paidAt = new Date(body.paymentDate || body.dateCreated);
         }
         await this.rechargeRepository.save(recharge);
         await this.processSuccessfulPayment(recharge);
         
-      } else if (body.status === 'EXPIRED' || body.status === 'VENCIDO') {
+      } else if (estadoUpper === 'EXPIRED' || estadoUpper === 'VENCIDO') {
         recharge.paymentStatus = PaymentStatus.EXPIRED;
         await this.rechargeRepository.save(recharge);
         
-      } else if (body.status === 'FAILED' || body.status === 'FALLIDO') {
+      } else if (estadoUpper === 'FAILED' || estadoUpper === 'FALLIDO' || estadoUpper === 'CANCELLED') {
         recharge.paymentStatus = PaymentStatus.FAILED;
         await this.rechargeRepository.save(recharge);
       }
@@ -641,7 +852,8 @@ export class CreditsService {
     await queryRunner.startTransaction();
 
     try {
-      // Obtener la compañía con bloqueo para evitar condiciones de carrera
+      console.log(`💰 Procesando pago exitoso para recarga: ${recharge.id}, créditos: ${recharge.credits}`);
+
       const company = await queryRunner.manager.findOne(Company, {
         where: { id: recharge.companyId },
         lock: { mode: 'pessimistic_write' },
@@ -654,14 +866,14 @@ export class CreditsService {
       const balanceBefore = company.current_credits;
       const balanceAfter = balanceBefore + recharge.credits;
 
-      // Actualizar créditos de la compañía
+      console.log(`💰 Balance antes: ${balanceBefore}, después: ${balanceAfter}`);
+
       await queryRunner.manager.update(
         Company,
         { id: recharge.companyId },
         { current_credits: balanceAfter }
       );
 
-      // Registrar la transacción
       const transaction = new CreditTransaction();
       transaction.id = uuidv4();
       transaction.companyId = recharge.companyId;
@@ -676,13 +888,15 @@ export class CreditsService {
         paymentMethod: recharge.paymethod,
         amount: recharge.amount,
         qrId: recharge.qrId,
+        paidAt: recharge.paidAt,
       };
 
       await queryRunner.manager.save(transaction);
-
       await queryRunner.commitTransaction();
 
-      this.logger.log(`Pago procesado exitosamente: ${recharge.id} - ${recharge.credits} créditos acreditados a ${recharge.companyId}`);
+      console.log(`✅ Pago procesado exitosamente: ${recharge.id} - ${recharge.credits} créditos acreditados a ${recharge.companyId}`);
+      console.log(`💰 Nuevo saldo: ${balanceAfter}`);
+      
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error(`Error al procesar pago exitoso: ${error.message}`, error.stack);
@@ -766,10 +980,8 @@ export class CreditsService {
     }
 
     try {
-      // Obtener costo por canal
       const costPerMessage = await this.getChannelCost(channel as any);
 
-      // Obtener la compañía con bloqueo
       const company = await useQueryRunner.manager.findOne(Company, {
         where: { id: companyId },
         lock: { mode: 'pessimistic_write' },
@@ -779,7 +991,6 @@ export class CreditsService {
         throw new NotFoundException('Empresa no encontrada');
       }
 
-      // Verificar créditos suficientes
       if (company.current_credits < costPerMessage) {
         throw new BadRequestException(
           `Créditos insuficientes. Necesitas ${costPerMessage} créditos, tienes ${company.current_credits}`
@@ -789,14 +1000,12 @@ export class CreditsService {
       const balanceBefore = company.current_credits;
       const balanceAfter = balanceBefore - costPerMessage;
 
-      // Actualizar créditos de la compañía
       await useQueryRunner.manager.update(
         Company,
         { id: companyId },
         { current_credits: balanceAfter }
       );
 
-      // Registrar la transacción
       const transaction = new CreditTransaction();
       transaction.id = uuidv4();
       transaction.companyId = companyId;
@@ -819,14 +1028,7 @@ export class CreditsService {
         await useQueryRunner.commitTransaction();
       }
 
-      // Disparar evento de créditos actualizados
       setTimeout(() => {
-        const event = new CustomEvent('credits-updated', {
-          detail: {
-            companyId,
-            credits: balanceAfter,
-          },
-        });
         (global as any).eventEmitter?.emit('credits-updated', {
           companyId,
           credits: balanceAfter,

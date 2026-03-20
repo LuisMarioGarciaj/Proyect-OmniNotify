@@ -1,8 +1,8 @@
 import {
   Controller,
   Post,
-  Body,
   Get,
+  Body,
   Param,
   Query,
   HttpCode,
@@ -28,7 +28,6 @@ interface TestSmsRequest {
   apiKey?: string;
   apiSecret?: string;
   fromNumber?: string;
-  // Para Twilio
   accountSid?: string;
   authToken?: string;
   metadata?: {
@@ -117,7 +116,6 @@ export class SmsController {
     try {
       this.logger.log('📱 ENVIANDO SMS DIRECTAMENTE');
 
-      // Validar fecha de programación si existe
       let scheduledDate: Date | null = null;
       if (body.schedule) {
         scheduledDate = new Date(body.schedule);
@@ -132,10 +130,9 @@ export class SmsController {
         }
       }
 
-      // Construir configuración de forma inteligente
       const smsConfig: SMSConfig = {
         provider: body.provider,
-        ...(body.config || {}), // Spread de las credenciales si existen
+        ...(body.config || {}),
       };
 
       const smsPayload: SMSContent = {
@@ -147,7 +144,6 @@ export class SmsController {
       let result;
 
       if (scheduledDate) {
-        // Programar el envío
         const delay = scheduledDate.getTime() - Date.now();
 
         const dto: SendNotificationDto = {
@@ -155,9 +151,12 @@ export class SmsController {
           channel: NotificationChannel.SMS,
           companyId: body.companyId,
           variables: { text: body.text, ...body.variables },
-          scheduledAt: body.schedule,
           templateId: 'direct-sms',
           content: body.text,
+          scheduling: {
+            is_scheduled: true,
+            send_at: body.schedule,
+          },
         };
 
         const job = await this.notificationsQueue.add('send-notification', dto, {
@@ -173,7 +172,6 @@ export class SmsController {
           scheduledAt: scheduledDate,
         };
       } else {
-        // Envío inmediato - el SMSProvider usará credenciales globales si es necesario
         result = await this.smsProvider.send(smsConfig, smsPayload);
       }
 
@@ -201,13 +199,10 @@ export class SmsController {
         companyName: body.metadata?.companyName || 'OmniNotify',
       });
 
-      // Construir configuración de forma inteligente
       let smsConfig: SMSConfig = {
         provider: body.provider,
       };
 
-      // Si el usuario proporcionó credenciales específicas, usarlas
-      // Si no, el SMSProvider las cargará desde la BD
       if (body.provider === 'vonage') {
         if (body.apiKey || body.apiSecret) {
           smsConfig.apiKey = body.apiKey;
@@ -235,17 +230,15 @@ export class SmsController {
       const smsPayload: SMSContent = {
         to: body.to,
         text: testMessage,
-        from: body.fromNumber, // Opcional, el provider usará el de la config si es necesario
+        from: body.fromNumber,
       };
 
       const result = await this.smsProvider.send(smsConfig, smsPayload);
 
-      // Determinar fuente de las credenciales
       const source = (body.provider === 'vonage' && (body.apiKey || body.apiSecret)) ||
                      (body.provider === 'twilio' && (body.accountSid || body.authToken))
                      ? 'provided' : 'database';
 
-      // Construir respuesta según el proveedor
       const responseResult: any = {
         provider: body.provider,
         messageId: result.messageId,
@@ -255,14 +248,12 @@ export class SmsController {
         source,
       };
 
-      // Añadir campos específicos de Vonage
       if (result.remainingBalance !== undefined) {
         responseResult.remainingBalance = result.remainingBalance;
         responseResult.messagePrice = result.messagePrice;
         responseResult.network = result.network;
       }
 
-      // Añadir campos específicos de Twilio
       if (result.price !== undefined) {
         responseResult.price = result.price;
         responseResult.priceUnit = result.priceUnit;
@@ -302,7 +293,6 @@ export class SmsController {
       this.logger.log(`💰 Obteniendo balance para ${companyId} con provider ${provider}`);
 
       if (provider === 'vonage') {
-        // Obtener credenciales globales de Vonage
         const credentials = await this.systemConfigService.getVonageCredentials();
         
         const config: SMSConfig = {
@@ -328,13 +318,8 @@ export class SmsController {
         };
       } 
       else if (provider === 'twilio') {
-        // Obtener credenciales globales de Twilio
         const credentials = await this.systemConfigService.getTwilioCredentials();
-        
-        // Obtener balance de Twilio
         const balance = await this.getTwilioBalanceFromAPI(credentials);
-        
-        // Formatear según la moneda
         const formattedBalance = this.formatBalance(
           parseFloat(balance.balance), 
           balance.currency
@@ -363,9 +348,6 @@ export class SmsController {
     }
   }
 
-  /**
-   * Endpoint específico para obtener balance de Twilio (para el frontend)
-   */
   @Get('twilio/balance')
   @HttpCode(HttpStatus.OK)
   async getTwilioBalanceEndpoint() {
@@ -391,12 +373,8 @@ export class SmsController {
     }
   }
 
-  /**
-   * Método auxiliar para obtener balance de Twilio
-   */
   private async getTwilioBalanceFromAPI(credentials: { accountSid: string; authToken: string }): Promise<TwilioBalanceResponse> {
     try {
-      // Usar fetch nativo (Node 18+) para evitar instalar twilio SDK si no está
       const response = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${credentials.accountSid}/Balance.json`,
         {
@@ -431,9 +409,6 @@ export class SmsController {
         status: body['err-code'] ? 'failed' : 'delivered',
       });
 
-      // Procesar el webhook (actualizar estado en BD, notificar, etc.)
-      // Aquí puedes guardar el delivery report en tu base de datos
-
       return {
         success: true,
         message: 'Webhook procesado',
@@ -459,9 +434,6 @@ export class SmsController {
         to: body.To,
         from: body.From,
       });
-
-      // Procesar webhook de Twilio (los parámetros vienen diferentes)
-      // Twilio envía: MessageSid, MessageStatus, To, From, etc.
 
       return {
         success: true,
@@ -552,9 +524,6 @@ export class SmsController {
     if (!body) throw new BadRequestException('El cuerpo de la solicitud está vacío');
     if (!body.to) throw new BadRequestException('El campo "to" es requerido');
     if (!body.provider) throw new BadRequestException('El campo "provider" es requerido');
-    
-    // Validación más flexible - las credenciales pueden venir de la BD
-    // Solo validamos que exista el número de destino
   }
 
   private generateTestMessage(companyName: string, testType: string): string {
@@ -569,27 +538,6 @@ export class SmsController {
     }
   }
 
-  private buildSuccessResponse(
-    result: any,
-    body: TestSmsRequest,
-    companyName: string,
-  ) {
-    return {
-      success: true,
-      message: 'SMS de prueba enviado exitosamente',
-      result: {
-        provider: body.provider,
-        messageId: result.messageId || `test_${Date.now()}`,
-        recipient: body.to,
-        companyName,
-        remainingBalance: result.remainingBalance,
-        messagePrice: result.messagePrice,
-        network: result.network,
-        status: 'sent',
-      },
-    };
-  }
-
   private buildErrorResponse(error: any, message: string) {
     this.logger.error('='.repeat(50));
     this.logger.error('❌ ERROR SMS:', message);
@@ -602,11 +550,5 @@ export class SmsController {
       message,
       error: error.message,
     };
-  }
-
-  private logSection(title: string) {
-    console.log('='.repeat(50));
-    console.log(title);
-    console.log('='.repeat(50));
   }
 }

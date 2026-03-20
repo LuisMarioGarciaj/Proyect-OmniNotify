@@ -37,7 +37,6 @@ export class CreditRecharge {
   @Column({
     type: 'enum',
     enum: PayMethod,
-    comment: 'CARD=tarjeta (genera URL), QR=código QR, STRIKE=transferencia'
   })
   paymethod: PayMethod;
 
@@ -58,12 +57,14 @@ export class CreditRecharge {
   @Column()
   credits: number;
 
+  @Column({ name: 'qr_image', type: 'text', nullable: true })
+  qrImage: string;  // ← Guardamos la imagen aquí
+
   @Column({
     name: 'qr_status',
     type: 'enum',
     enum: QrStatus,
     default: QrStatus.PENDING,
-    comment: 'Estado del QR físico: PENDING=generado, PAID=escaneado, EXPIRED=vencido, CANCELLED=cancelado'
   })
   @Index('idx_qr_status')
   qrStatus: QrStatus;
@@ -73,7 +74,6 @@ export class CreditRecharge {
     type: 'enum',
     enum: PaymentStatus,
     default: PaymentStatus.PENDING,
-    comment: 'Estado del pago: PENDING=pendiente, PAID=pagado, EXPIRED=vencido, FAILED=falló'
   })
   @Index('idx_payment_status')
   paymentStatus: PaymentStatus;
@@ -87,6 +87,4 @@ export class CreditRecharge {
   @Column({ name: 'expires_at', nullable: true })
   @Index('idx_expires')
   expiresAt: Date;
-
-  
 }

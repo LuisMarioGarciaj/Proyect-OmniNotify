@@ -193,19 +193,24 @@ export class EmailController {
         }
       }
       
-      // 🔥 CORREGIDO: Agregar content usando html
+      // 🔥 CORREGIDO: Agregar content usando html y usar scheduling
       const dto: SendNotificationDto = {
         recipient: body.to,
         subject: body.subject,
         html: body.html,
         text: body.text,
-        content: body.html, // <-- AGREGADO: content igual que html (¡CRÍTICO!)
+        content: body.html,
         channel: NotificationChannel.EMAIL,
         companyId: body.companyId,
         companyName: body.companyName,
         variables: body.variables,
-        scheduledAt: body.schedule,
         templateId: body.templateId || 'custom',
+        scheduling: body.schedule ? {
+          is_scheduled: true,
+          send_at: body.schedule,
+        } : {
+          is_scheduled: false,
+        },
       };
 
       // Calcular delay si hay programación
@@ -303,18 +308,23 @@ export class EmailController {
         textContent = content.textContent;
       }
 
-      // 🔥 CORREGIDO: Agregar content usando html
+      // 🔥 CORREGIDO: Agregar content usando html y usar scheduling
       const dto: SendNotificationDto = {
         recipient: body.to,
         subject: body.subject,
         html: htmlContent!,
         text: textContent!,
-        content: htmlContent!, // <-- AGREGADO: content igual que html (¡CRÍTICO!)
+        content: htmlContent!,
         channel: NotificationChannel.EMAIL,
         companyId: body.companyId,
         variables: body.variables,
-        scheduledAt: body.schedule,
         templateId: body.templateId,
+        scheduling: body.schedule ? {
+          is_scheduled: true,
+          send_at: body.schedule,
+        } : {
+          is_scheduled: false,
+        },
       };
 
       // Calcular delay si hay programación
@@ -402,19 +412,22 @@ export class EmailController {
       
       const delay = scheduledDate.getTime() - now.getTime();
       
-      // 🔥 CORREGIDO: Agregar content usando html
+      // 🔥 CORREGIDO: Agregar content usando html y usar scheduling
       const dto: SendNotificationDto = {
         recipient: body.to,
         subject: body.subject,
         html: body.html,
         text: body.text,
-        content: body.html, // <-- AGREGADO: content igual que html (¡CRÍTICO!)
+        content: body.html,
         channel: NotificationChannel.EMAIL,
         companyId: body.companyId,
         companyName: body.companyName,
         variables: body.variables,
-        scheduledAt: body.schedule,
         templateId: body.templateId,
+        scheduling: {
+          is_scheduled: true,
+          send_at: body.schedule,
+        },
       };
 
       // Usar ID más corto para evitar problemas de longitud

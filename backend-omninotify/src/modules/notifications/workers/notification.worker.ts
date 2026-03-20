@@ -3,9 +3,11 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 
-import { SendNotificationDto, NotificationChannel, NotificationStatus } from '../dto/send-notification.dto';
+import { SendNotificationDto, NotificationChannel } from '../dto/send-notification.dto';
 import { WhatsappProvider } from '../providers/whatsapp/whatsapp.provider';
+import { NotificationLog, NotificationLogStatus } from '../entities/notification-log.entity';
 
 /**
  * WORKER: Procesa todos los trabajos de notificación desde la cola BullMQ
@@ -20,13 +22,14 @@ import { WhatsappProvider } from '../providers/whatsapp/whatsapp.provider';
 @Processor('notifications')
 export class NotificationWorker extends WorkerHost {
   private readonly logger = new Logger(NotificationWorker.name);
+  private startTime: number = 0;
 
   constructor(
     private whatsappProvider: WhatsappProvider,
     // private emailProvider: EmailProvider,        // TODO: Inyectar cuando tengas
     // private smsProvider: SmsProvider,            // TODO: Inyectar cuando tengas
-    // @InjectRepository(NotificationLogEntity)
-    // private notificationLogRepository: Repository<NotificationLogEntity>,
+    @InjectRepository(NotificationLog)
+    private notificationLogRepository: Repository<NotificationLog>,
   ) {
     super();
     this.logger.log('✅ NotificationWorker inicializado correctamente');
@@ -37,7 +40,7 @@ export class NotificationWorker extends WorkerHost {
    * BullMQ lo llama automáticamente cuando hay trabajo en 'notifications'
    */
   async process(job: Job<SendNotificationDto>): Promise<any> {
-    const startTime = Date.now();
+    this.startTime = Date.now();
     const jobId = job.id?.toString() || 'unknown';
 
     try {
@@ -76,30 +79,30 @@ export class NotificationWorker extends WorkerHost {
       await this.saveNotificationLog(
         dto,
         result,
-        NotificationStatus.SENT,
+        NotificationLogStatus.SENT,
         jobId
       );
 
-      const duration = Date.now() - startTime;
+      const duration = Date.now() - this.startTime;
       this.logger.log(`✅ JOB COMPLETADO EXITOSAMENTE en ${duration}ms`);
       this.logger.log(`📤 Resultado: ${result?.messageSid || result?.status || 'OK'}`);
       this.logger.log('='.repeat(70) + '\n');
 
       return result;
     } catch (error: any) {
-      const duration = Date.now() - startTime;
+      const duration = Date.now() - this.startTime;
 
       this.logger.error(`\n❌ JOB FALLIDO: ${jobId}`);
       this.logger.error(`⏱️  Duración: ${duration}ms`);
       this.logger.error(`📝 Error: ${error.message}`);
-      this.logger.error(`🔄 Intento: ${job.attemptsMade}/${job.opts.attempts}`);
+      this.logger.error(`🔄 Intento: ${job.attemptsMade}/${job.opts.attempts || 3}`);
       this.logger.error('='.repeat(70) + '\n');
 
       // Guardar error en BD
       await this.saveNotificationLog(
         job.data,
         { error: error.message },
-        NotificationStatus.FAILED,
+        NotificationLogStatus.FAILED,
         jobId,
         error.message
       );
@@ -273,7 +276,7 @@ export class NotificationWorker extends WorkerHost {
       throw new Error('DTO es nulo o indefinido');
     }
 
-    const required = ['companyId', 'channel', 'recipient', 'templateId'];
+    const required = ['companyId', 'channel', 'recipient'];
     const missing = required.filter(
       field => !dto[field as keyof SendNotificationDto]
     );
@@ -293,35 +296,29 @@ export class NotificationWorker extends WorkerHost {
 
   /**
    * Guarda un log de la notificación en BD
-   * TODO: Descomentar cuando crees la Entity NotificationLog
    */
   private async saveNotificationLog(
     dto: SendNotificationDto,
     result: any,
-    status: NotificationStatus,
+    status: NotificationLogStatus,
     jobId: string,
     errorMessage?: string
   ): Promise<void> {
     try {
-      // TODO: Descomentar cuando tengas el repositorio inyectado
-      // const log = this.notificationLogRepository.create({
-      //   id: uuidv4(),
-      //   companyId: dto.companyId,
-      //   channel: dto.channel,
-      //   recipient: dto.recipient,
-      //   status,
-      //   messageSid: result?.messageSid,
-      //   jobId,
-      //   errorMessage,
-      //   metadata: {
-      //     templateId: dto.templateId,
-      //     provider: result?.provider || 'unknown',
-      //     timestamp: new Date().toISOString(),
-      //     duration: Date.now() - startTime,
-      //   },
-      // });
-      //
-      // await this.notificationLogRepository.save(log);
+      // 🔥 CORREGIDO: Usar NotificationLogStatus en lugar de NotificationStatus
+      const logData = {
+        id: uuidv4(),
+        companyId: dto.companyId,
+        channel: dto.channel,
+        recipient: dto.recipient,
+        status: status,
+        jobId: jobId,
+        errorMessage: errorMessage || null,
+        contactId: dto.contactId || null,
+      };
+
+      const log = this.notificationLogRepository.create(logData);
+      await this.notificationLogRepository.save(log);
 
       this.logger.log(`💾 Log guardado en BD para job ${jobId}`);
     } catch (error: any) {
@@ -339,11 +336,12 @@ export class NotificationWorker extends WorkerHost {
     this.logger.log(`  🏢 Empresa: ${dto.companyId}`);
     this.logger.log(`  📬 Canal: ${dto.channel}`);
     this.logger.log(`  👥 Destinatario: ${dto.recipient}`);
-    this.logger.log(`  📋 Template: ${dto.templateId}`);
+    this.logger.log(`  📋 Template: ${dto.templateId || 'N/A'}`);
     this.logger.log(`  🔄 Intento: ${job.attemptsMade + 1}/${job.opts.attempts || 3}`);
     
-    if (dto.scheduledAt) {
-      this.logger.log(`  📅 Programado para: ${dto.scheduledAt}`);
+    // 🔥 CORREGIDO: Usar scheduling en lugar de scheduledAt
+    if (dto.scheduling?.is_scheduled && dto.scheduling.send_at) {
+      this.logger.log(`  📅 Programado para: ${dto.scheduling.send_at}`);
     }
 
     if (dto.variables && Object.keys(dto.variables).length > 0) {

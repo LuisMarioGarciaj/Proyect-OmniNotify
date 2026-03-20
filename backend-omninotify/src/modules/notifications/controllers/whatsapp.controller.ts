@@ -58,22 +58,16 @@ export class WhatsappController {
 
   // ==================== ENDPOINTS PÚBLICOS ====================
 
-  /**
-   * Envía un mensaje de texto simple por WhatsApp
-   * POST /api/whatsapp/send
-   */
   @Post('send')
   @HttpCode(HttpStatus.ACCEPTED)
   async sendMessage(@Body() body: SendWhatsAppRequest) {
     try {
       this.logger.log(`📱 Recibida solicitud de envío a ${body.to}`);
       
-      // Validaciones básicas
       if (!body.to || !body.body || !body.companyId) {
         throw new BadRequestException('Campos requeridos: to, body, companyId');
       }
 
-      // Crear DTO
       const dto: SendNotificationDto = {
         recipient: body.to,
         channel: NotificationChannel.WHATSAPP,
@@ -82,11 +76,16 @@ export class WhatsappController {
         templateId: body.templateId || 'simple',
         html: body.body,
         text: body.body,
+        content: body.body,
         variables: body.variables,
-        scheduledAt: body.schedule,
+        scheduling: body.schedule ? {
+          is_scheduled: true,
+          send_at: body.schedule,
+        } : {
+          is_scheduled: false,
+        },
       };
 
-      // Enqueue en BullMQ
       const job = await this.notificationsQueue.add(
         'send-notification',
         dto,
@@ -117,17 +116,12 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Envía un mensaje con media (imagen, documento, etc)
-   * POST /api/whatsapp/send-media
-   */
   @Post('send-media')
   @HttpCode(HttpStatus.ACCEPTED)
   async sendMediaMessage(@Body() body: SendWhatsAppMediaRequest) {
     try {
       this.logger.log(`📸 Recibida solicitud de envío con media a ${body.to}`);
 
-      // Validaciones
       if (!body.to || !body.body || !body.mediaUrl || !body.companyId) {
         throw new BadRequestException('Campos requeridos: to, body, mediaUrl, companyId');
       }
@@ -140,12 +134,18 @@ export class WhatsappController {
         templateId: body.templateId || 'media',
         html: body.body,
         text: body.body,
+        content: body.body,
         variables: {
           ...body.variables,
           mediaUrl: body.mediaUrl,
           mediaType: body.mediaType,
         },
-        scheduledAt: body.schedule,
+        scheduling: body.schedule ? {
+          is_scheduled: true,
+          send_at: body.schedule,
+        } : {
+          is_scheduled: false,
+        },
       };
 
       const job = await this.notificationsQueue.add(
@@ -174,10 +174,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Envía un mensaje usando template
-   * POST /api/whatsapp/send-template
-   */
   @Post('send-template')
   @HttpCode(HttpStatus.ACCEPTED)
   async sendTemplate(@Body() body: {
@@ -202,9 +198,15 @@ export class WhatsappController {
         companyName: body.companyName,
         templateId: body.templateName,
         variables: body.variables,
-        scheduledAt: body.schedule,
         html: '',
         text: '',
+        content: '',
+        scheduling: body.schedule ? {
+          is_scheduled: true,
+          send_at: body.schedule,
+        } : {
+          is_scheduled: false,
+        },
       };
 
       const job = await this.notificationsQueue.add(
@@ -232,10 +234,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Envía un mensaje programado
-   * POST /api/whatsapp/send-scheduled
-   */
   @Post('send-scheduled')
   @HttpCode(HttpStatus.OK)
   async sendScheduled(@Body() body: SendWhatsAppRequest & { schedule: string }) {
@@ -246,7 +244,6 @@ export class WhatsappController {
         throw new BadRequestException('El campo "schedule" (fecha/hora) es requerido');
       }
 
-      // Validar fecha
       const scheduledDate = new Date(body.schedule);
       const now = new Date();
 
@@ -268,8 +265,12 @@ export class WhatsappController {
         templateId: body.templateId || 'scheduled',
         html: body.body,
         text: body.body,
+        content: body.body,
         variables: body.variables,
-        scheduledAt: body.schedule,
+        scheduling: {
+          is_scheduled: true,
+          send_at: body.schedule,
+        },
       };
 
       const jobId = `sch_${uuidv4().substring(0, 20)}`;
@@ -285,7 +286,6 @@ export class WhatsappController {
         }
       );
 
-      // Guardar en BD
       const scheduledNotification = this.scheduledNotificationRepository.create({
         id: job.id!,
         recipient: body.to,
@@ -316,10 +316,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Obtiene mensajes programados de una empresa
-   * GET /api/whatsapp/scheduled/:companyId
-   */
   @Get('scheduled/:companyId')
   @HttpCode(HttpStatus.OK)
   async getScheduledMessages(@Param('companyId') companyId: string) {
@@ -347,10 +343,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Cancela un mensaje programado
-   * DELETE /api/whatsapp/scheduled/:id
-   */
   @Delete('scheduled/:id')
   @HttpCode(HttpStatus.OK)
   async cancelScheduled(@Param('id') id: string) {
@@ -371,7 +363,6 @@ export class WhatsappController {
         );
       }
 
-      // Cancelar job en BullMQ
       try {
         const job = await this.notificationsQueue.getJob(id);
         if (job) {
@@ -382,7 +373,6 @@ export class WhatsappController {
         this.logger.warn(`⚠️ No se pudo cancelar job ${id}:`, err.message);
       }
 
-      // Actualizar estado en BD
       notification.status = ScheduledNotificationStatus.CANCELLED;
       await this.scheduledNotificationRepository.save(notification);
 
@@ -400,10 +390,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Obtiene el estado de un job
-   * GET /api/whatsapp/queue/job/:jobId
-   */
   @Get('queue/job/:jobId')
   @HttpCode(HttpStatus.OK)
   async getJobStatus(@Param('jobId') jobId: string) {
@@ -442,10 +428,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Obtiene estadísticas de la cola
-   * GET /api/whatsapp/queue/stats
-   */
   @Get('queue/stats')
   @HttpCode(HttpStatus.OK)
   async getQueueStats() {
@@ -486,25 +468,13 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Webhook para recibir eventos de Twilio
-   * POST /api/whatsapp/webhook
-   */
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async handleWebhook(@Body() body: any) {
     try {
       this.logger.log(`📩 Webhook recibido de Twilio: ${body.MessageStatus}`);
 
-      // Validar que sea una solicitud legítima de Twilio
-      // TODO: Implementar validación de firma de Twilio
-
       const { MessageSid, MessageStatus, To, From, ErrorCode, ErrorMessage } = body;
-
-      // Aquí puedes:
-      // 1. Actualizar estado en BD
-      // 2. Guardar logs
-      // 3. Disparar eventos
 
       this.logger.log(`✅ Evento procesado: ${MessageStatus} para ${MessageSid}`);
 
@@ -523,10 +493,6 @@ export class WhatsappController {
     }
   }
 
-  /**
-   * Health check del servicio
-   * GET /api/whatsapp/health
-   */
   @Get('health')
   @HttpCode(HttpStatus.OK)
   healthCheck() {

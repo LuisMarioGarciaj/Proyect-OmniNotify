@@ -1,21 +1,72 @@
-// src/modules/notifications/controllers/notifications.controller.ts
-import { Controller, Post, Body, UseGuards, Get, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Body, UseGuards, Get, Query, Param, Delete, HttpCode, HttpStatus } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CompanyId } from '../../common/decorators/company-id.decorator';
 import { NotificationUnifiedService } from './notification-unified.service';
-import { NotificationsService } from './notifications.service'; // ✅ Mantener servicio original
+import { NotificationsService } from './notifications.service';
 import { SendUnifiedNotificationDto } from './dto/send-unified.dto';
-import { SendNotificationDto } from './dto/send-notification.dto'; // ✅ DTO original
+import { SendNotificationResponseDto } from './dto/send-notification.dto';
+
+// Definir interfaces de respuesta locales
+interface StatsResponse {
+  success: boolean;
+  companyId: string;
+  queueStats: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+    scheduled: number;
+    total: number;
+  };
+  timestamp: string;
+}
+
+interface LogsResponse {
+  success: boolean;
+  data: any[];
+  total: number;
+  limit: number;
+  offset: number;
+  timestamp: string;
+}
+
+interface ScheduledItem {
+  id: string;
+  recipient: string;
+  companyId: string;
+  templateId: string;
+  channel: string;
+  variables: Record<string, any> | null;
+  scheduledAt: string;
+  status: string;
+}
+
+interface ScheduledResponse {
+  success: boolean;
+  data: ScheduledItem[];
+  count: number;
+  timestamp: string;
+}
+
+interface CancelResponse {
+  success: boolean;
+  message: string;
+  data: {
+    id: string;
+    status: string;
+  };
+}
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
 @Controller('notifications')
-@UseGuards(JwtAuthGuard) // ✅ CompanyId del JWT
+@UseGuards(JwtAuthGuard)
 export class NotificationsController {
   constructor(
-    private readonly unifiedService: NotificationUnifiedService,  // ✅ Servicio NUEVO
-    private readonly legacyService: NotificationsService,          // ✅ Servicio VIEJO (compatibilidad)
+    private readonly unifiedService: NotificationUnifiedService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -24,6 +75,7 @@ export class NotificationsController {
    * Scheduling automático según el DTO
    */
   @Post('send')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: '📤 Enviar notificación unificada (EMAIL | SMS | WHATSAPP)',
     description: `
@@ -39,72 +91,69 @@ export class NotificationsController {
       
       **CompanyId automático:**
       - NO enviar en el body, se extrae del JWT
-      
-      **Ejemplos:**
-      
-      Envío inmediato:
-      \`\`\`json
-      {
-        "channel": "EMAIL",
-        "templateAlias": "WELCOME_EMAIL",
-        "recipient": "user@example.com",
-        "variables": { "name": "Juan" },
-        "scheduling": { "is_scheduled": false }
-      }
-      \`\`\`
-      
-      Envío programado:
-      \`\`\`json
-      {
-        "channel": "WHATSAPP",
-        "templateAlias": "ORDER_CONFIRMATION",
-        "recipient": "+59176131645",
-        "variables": { "orderNumber": "123" },
-        "scheduling": {
-          "is_scheduled": true,
-          "send_at": "2026-02-20T15:00:00Z"
-        }
-      }
-      \`\`\`
     `
   })
   @ApiResponse({ status: 200, description: 'Notificación procesada exitosamente' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   async send(
-    @CompanyId() companyId: string, // ✅ Del JWT
+    @CompanyId() companyId: string,
     @Body() dto: SendUnifiedNotificationDto,
-  ) {
+  ): Promise<SendNotificationResponseDto> {
     return this.unifiedService.send(companyId, dto);
   }
 
   /**
    * 📊 ENDPOINT PARA OBTENER ESTADÍSTICAS
-   * Compatible con código anterior
    */
   @Get('stats')
   @ApiOperation({ 
     summary: 'Obtener estadísticas de la cola',
     description: 'Retorna estadísticas de la cola de notificaciones'
   })
-  async getStats(@CompanyId() companyId: string) {
-    return this.legacyService.getStats(companyId);
+  async getStats(@CompanyId() companyId: string): Promise<StatsResponse> {
+    return this.notificationsService.getStats(companyId);
   }
 
-  // ============================================
-  // ENDPOINTS LEGACY (Para migración gradual)
-  // ============================================
-  // Si todavía tienes código que usa el endpoint antiguo
-  // sin el decorator @CompanyId, puedes mantenerlo aquí
-  // pero marcarlo como deprecated
-  
-  // Ejemplo:
-  // @Post('send-legacy')
-  // @ApiOperation({ 
-  //   summary: '⚠️ DEPRECATED - Usar POST /send en su lugar',
-  //   deprecated: true
-  // })
-  // async sendLegacy(@Body() dto: SendNotificationDto) {
-  //   return this.legacyService.enqueueNotification(dto);
-  // }
+  /**
+   * 📋 Obtener logs de notificaciones
+   */
+  @Get('logs')
+  @ApiOperation({ summary: 'Obtener logs de notificaciones' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  async getLogs(
+    @CompanyId() companyId: string,
+    @Query('limit') limit: number = 50,
+    @Query('offset') offset: number = 0,
+  ): Promise<LogsResponse> {
+    return this.notificationsService.getLogs(companyId, limit, offset);
+  }
+
+  /**
+   * 📅 Obtener notificaciones programadas
+   */
+  @Get('scheduled')
+  @ApiOperation({ summary: 'Obtener notificaciones programadas' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  async getScheduled(
+    @CompanyId() companyId: string,
+    @Query('limit') limit: number = 50,
+    @Query('offset') offset: number = 0,
+  ): Promise<ScheduledResponse> {
+    return this.notificationsService.getScheduledNotifications(companyId, limit, offset);
+  }
+
+  /**
+   * ❌ Cancelar notificación programada
+   */
+  @Delete('scheduled/:id')
+  @ApiOperation({ summary: 'Cancelar notificación programada' })
+  async cancelScheduled(
+    @CompanyId() companyId: string,
+    @Param('id') id: string,
+  ): Promise<CancelResponse> {
+    return this.notificationsService.cancelScheduledNotification(companyId, id);
+  }
 }
