@@ -1,5 +1,10 @@
 // src/modules/users/users.service.ts
-import { Injectable, Logger, ConflictException, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ConflictException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -82,13 +87,15 @@ export class UsersService {
 
       // ── 3. Crear la config de Nexo WhatsApp para esta empresa ──
       // Todas las empresas usan el mismo token de Nexo (puede sobreescribirse desde Settings).
-      
+
       const providerConfig = queryRunner.manager.create(CompanyProviderConfig, {
         id: uuidv4(),
         companyId: companyId,
         providerId: NEXO_WHATSAPP_PROVIDER_ID,
         config: {
-          token: process.env.NEXO_API_TOKEN || '15c461b4-76ac-4c71-ac98-975901a98efb',
+          token:
+            process.env.NEXO_API_TOKEN ||
+            '15c461b4-76ac-4c71-ac98-975901a98efb',
           status: 'ACTIVE',
           environment: 'production',
           configuredAt: new Date().toISOString(),
@@ -106,7 +113,6 @@ export class UsersService {
 
       const { password: _, ...result } = savedUser;
       return result;
-
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error(`❌ Error en registro: ${error.message}`);
@@ -121,9 +127,20 @@ export class UsersService {
   }
 
   async validatePassword(password: string, storedPassword: string) {
-    if (!storedPassword.startsWith('$2b$') && !storedPassword.startsWith('$2a$')) {
+    if (
+      !storedPassword.startsWith('$2b$') &&
+      !storedPassword.startsWith('$2a$')
+    ) {
       return password === storedPassword;
     }
     return await bcrypt.compare(password, storedPassword);
+  }
+
+  async findById(userId: string): Promise<User | null> {
+    return this.userRepo.findOne({ where: { id: userId } });
+  }
+
+  async markFirstLoginDone(userId: string): Promise<void> {
+    await this.userRepo.update(userId, { is_first_login: false });
   }
 }
