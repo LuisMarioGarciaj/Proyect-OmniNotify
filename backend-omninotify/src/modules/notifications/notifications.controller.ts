@@ -67,7 +67,7 @@ export class NotificationsController {
   constructor(
     private readonly unifiedService: NotificationUnifiedService,
     private readonly notificationsService: NotificationsService,
-  ) {}
+  ) { }
 
   /**
    * 📤 ENDPOINT UNIFICADO NUEVO (RECOMENDADO)
@@ -76,7 +76,7 @@ export class NotificationsController {
    */
   @Post('send')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
+  @ApiOperation({
     summary: '📤 Enviar notificación unificada (EMAIL | SMS | WHATSAPP)',
     description: `
       **✅ ENDPOINT NUEVO MEJORADO**
@@ -107,7 +107,7 @@ export class NotificationsController {
    * 📊 ENDPOINT PARA OBTENER ESTADÍSTICAS
    */
   @Get('stats')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Obtener estadísticas de la cola',
     description: 'Retorna estadísticas de la cola de notificaciones'
   })
@@ -156,4 +156,43 @@ export class NotificationsController {
   ): Promise<CancelResponse> {
     return this.notificationsService.cancelScheduledNotification(companyId, id);
   }
+
+  /**
+   * GET /notifications/status?jobId=38
+   *
+   * Verifica el estado de un envío. El jobId viene en la respuesta del POST /send.
+   * Mismo header Authorization: Bearer <token> que el /send.
+   *
+   * Respuesta:
+   * - status: QUEUED | PENDING | SENDING | WAITING_RETRY | SENT | FAILED
+   * - log.attemptsMade: cuántos intentos se hicieron (1 = primer intento)
+   * - queue.state: estado en BullMQ (si el job aún no fue limpiado de Redis)
+   */
+  @Get('status')
+  @ApiOperation({ summary: '📊 Verificar estado de un envío por jobId' })
+  @ApiQuery({ name: 'jobId', required: true, description: 'Job ID del campo data.jobId en la respuesta del /send' })
+  async getStatus(
+    @CompanyId() companyId: string,
+    @Query('jobId') jobId: string,
+  ) {
+    return this.unifiedService.getStatus(companyId, jobId);
+  }
+
+  /**
+   * GET /notifications/templates
+   * GET /notifications/templates?channel=WHATSAPP
+   *
+   * Lista todos los templates disponibles con su templateAlias listo para copiar.
+   * Usar el valor de templateAlias en el campo templateAlias del POST /send.
+   */
+  @Get('templates')
+  @ApiOperation({ summary: '📋 Listar templates disponibles de la empresa' })
+  @ApiQuery({ name: 'channel', required: false, description: 'Filtrar: EMAIL | SMS | WHATSAPP' })
+  async listTemplates(
+    @CompanyId() companyId: string,
+    @Query('channel') channel?: string,
+  ) {
+    return this.unifiedService.listTemplates(companyId, channel);
+  }
+
 }

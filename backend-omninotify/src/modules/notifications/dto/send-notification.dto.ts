@@ -1,10 +1,10 @@
-import { 
-  IsEnum, 
-  IsString, 
-  IsObject, 
-  IsOptional, 
-  IsUUID, 
-  IsNotEmpty, 
+import {
+  IsEnum,
+  IsString,
+  IsObject,
+  IsOptional,
+  IsUUID,
+  IsNotEmpty,
   IsDateString,
   IsEmail,
   IsBoolean,
@@ -251,6 +251,9 @@ export class SendNotificationResponseDto {
     templateId?: string;
     scheduledAt?: string;
     hasAttachments?: boolean;
+    attemptsConfigured?: number;
+    retryIntervalMinutes?: number;
+    checkStatusUrl?: string;
   };
   checkStatus?: string;
   error?: string;

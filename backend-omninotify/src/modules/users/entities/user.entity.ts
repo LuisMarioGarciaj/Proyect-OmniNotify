@@ -4,7 +4,7 @@ import { Entity, PrimaryColumn, Column } from 'typeorm';
 @Entity('User')
 export class User {
   @PrimaryColumn('char', { length: 36 })
-  id: string; // ← char(36) es string
+  id: string;
 
   @Column({ name: 'company_id', type: 'char', length: 36 })
   company_id: string;
@@ -15,14 +15,14 @@ export class User {
   @Column({ length: 150 })
   email: string;
 
-  @Column({ length: 255 }) // ← Se llama 'password' en la BD
-  password: string; // ← Cambiado de 'password_hash' a 'password'
+  @Column({ length: 255 })
+  password: string;
 
   @Column({
     type: 'enum',
     enum: ['ADMIN', 'OPERATOR'],
   })
-  role: string; // ← Se llama 'role' no 'user_role'
+  role: string;
 
   @Column({
     type: 'enum',
@@ -30,7 +30,9 @@ export class User {
     default: 'ACTIVE',
   })
   status: string;
+
   company: any;
+
   @Column({
     name: 'is_first_login',
     type: 'tinyint',

@@ -11,7 +11,7 @@ export class AuthService {
     private jwtService: JwtService,
     private companiesService: CompaniesService,
     private otpService: OtpService,
-  ) {}
+  ) { }
 
   async login(email: string, password: string) {
     const user = await this.usersService.findByEmail(email);
@@ -20,23 +20,38 @@ export class AuthService {
     const isValid = await this.usersService.validatePassword(password, user.password);
     if (!isValid) throw new UnauthorizedException('Credenciales inválidas');
 
-    // ── Login normal (no es primer login) ──────────────────────────────────
-    if (!user.is_first_login) {
-      const { access_token, userData } = await this.buildTokenResponse(user);
-      return { access_token, user: userData };
+    // ── Primer login: intentar flujo OTP solo si SMTP está configurado ────────
+    // Si SMTP no está en el .env (desarrollo / pruebas), saltamos el OTP
+    // y devolvemos el token directamente para no bloquear el acceso.
+    if (user.is_first_login) {
+      const smtpConfigured = !!(
+        process.env.SMTP_HOST &&
+        process.env.SMTP_USER &&
+        process.env.SMTP_PASS
+      );
+
+      if (smtpConfigured) {
+        // SMTP disponible → flujo OTP estándar
+        const code = this.otpService.generateCode();
+        await this.otpService.saveOtp(user.id, code);
+        await this.otpService.sendWelcomeEmail(user.email, user.name, code);
+
+        return {
+          requires_otp: true,
+          user_id: user.id,
+          email: user.email,
+          is_first_login: true,
+        };
+      }
+
+      // SMTP no configurado → marcar primer login como hecho y devolver token
+      // igual que un login normal. Así no se bloquea en entornos sin email.
+      await this.usersService.markFirstLoginDone(user.id);
     }
 
-    // ── Primer login: enviar email de bienvenida con OTP ───────────────────
-    const code = this.otpService.generateCode();
-    await this.otpService.saveOtp(user.id, code);
-    await this.otpService.sendWelcomeEmail(user.email, user.name, code);
-
-    return {
-      requires_otp: true,
-      user_id: user.id,
-      email: user.email,
-      is_first_login: true,
-    };
+    // ── Login normal ──────────────────────────────────────────────────────────
+    const { access_token, userData } = await this.buildTokenResponse(user);
+    return { access_token, user: userData };
   }
 
   async verifyOtp(userId: string, code: string) {
@@ -52,7 +67,9 @@ export class AuthService {
     return { access_token, user: userData };
   }
 
-  // ── Helper compartido para construir el token y datos de usuario ──────────
+  // ── Helper compartido: construye el token y datos de usuario ──────────────
+  // Mismo formato de respuesta que el auth.service.ts anterior:
+  // { access_token, user: { id, email, name, role, company_id, company_name, whatsapp_configured } }
   private async buildTokenResponse(user: any) {
     let companyName = '';
     let whatsappConfigured = false;

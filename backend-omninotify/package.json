@@ -54,7 +54,7 @@
     "swagger-ui-express": "^5.0.1",
     "twilio": "^5.12.2",
     "typeorm": "^0.3.28",
-    "uuid": "8.3.2"
+    "uuid": "^8.3.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

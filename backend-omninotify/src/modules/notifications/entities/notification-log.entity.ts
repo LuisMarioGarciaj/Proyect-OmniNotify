@@ -1,9 +1,9 @@
-import { 
-  Entity, 
-  Column, 
-  PrimaryGeneratedColumn, 
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
   CreateDateColumn,
-  Index 
+  Index
 } from 'typeorm';
 import { NotificationChannel } from '../dto/send-notification.dto';
 
@@ -31,8 +31,8 @@ export class NotificationLog {
   @Column({ name: 'contact_id', type: 'char', length: 36, nullable: true })
   contactId: string | null;
 
-  @Column({ 
-    type: 'enum', 
+  @Column({
+    type: 'enum',
     enum: NotificationChannel,
     enumName: 'notification_channel_enum'
   })
@@ -41,11 +41,11 @@ export class NotificationLog {
   @Column({ length: 150 })
   recipient: string;
 
-  @Column({ 
-    type: 'enum', 
+  @Column({
+    type: 'enum',
     enum: NotificationLogStatus,
     enumName: 'notification_log_status_enum',
-    default: NotificationLogStatus.PENDING 
+    default: NotificationLogStatus.PENDING
   })
   status: NotificationLogStatus;
 
@@ -54,6 +54,11 @@ export class NotificationLog {
 
   @Column({ name: 'job_id', type: 'varchar', length: 100, nullable: true })
   jobId: string | null;
+
+  @Column({ name: 'attempts', type: 'int', default: 0 })
+  // Cuántos intentos de envío se realizaron (actualizado por el processor al SENT o FAILED).
+  // 1 = primer intento, 2 = segundo reintento, etc.
+  attempts: number;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

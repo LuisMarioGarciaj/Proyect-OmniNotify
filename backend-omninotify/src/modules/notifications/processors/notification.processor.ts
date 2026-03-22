@@ -33,6 +33,7 @@ import {
 } from '../../system/services/system-config.service';
 import { CreditsService } from '../../credits/credits.service';
 import { Company } from '../../companies/entities/company.entity';
+import { Contact } from '../../contacts/entities/contact.entity';
 import { Channel as CreditsChannel } from '../../credits/entities/channel-cost.entity';
 import { NotificationChannel as CreditsNotificationChannel } from '../../credits/entities/credit-transaction.entity';
 
@@ -42,7 +43,12 @@ type ProcessedNotificationDto = SendNotificationDto & {
   processedSubject?: string;
 };
 
-@Processor('notifications')
+@Processor('notifications', {
+  // ✅ FIX stalled jobs: BullMQ marca job como stalled si el worker no responde en 30s.
+  // Con transacciones MySQL + pessimistic_write podemos superar ese límite fácilmente.
+  lockDuration: 120_000,   // 2 minutos antes de marcar stalled
+  lockRenewTime: 50_000,   // renueva el lock cada 50s (debe ser < lockDuration/2)
+})
 export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);
 
@@ -113,28 +119,31 @@ export class NotificationProcessor extends WorkerHost {
   constructor(
     @InjectRepository(ScheduledNotification)
     private scheduledNotificationRepository: Repository<ScheduledNotification>,
-    
+
     @InjectRepository(NotificationLog)
     private notificationLogsRepository: Repository<NotificationLog>,
-    
+
     @InjectRepository(CompanyProviderConfig)
     private companyProviderConfigRepository: Repository<CompanyProviderConfig>,
-    
+
     @InjectRepository(Provider)
     private providerRepository: Repository<Provider>,
-    
+
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
-    
+
     private readonly emailProvider: EmailProvider,
     private readonly smsProvider: SMSProvider,
     private readonly nexoWhatsappProvider: NexoWhatsappProvider,
     private readonly templatesService: TemplatesService,
     private readonly systemConfigService: SystemConfigService,
     private readonly httpService: HttpService,
-    
+
     private readonly creditsService: CreditsService,
     private readonly dataSource: DataSource,
+
+    @InjectRepository(Contact)
+    private readonly contactRepository: Repository<Contact>,
   ) {
     super();
   }
@@ -161,15 +170,15 @@ export class NotificationProcessor extends WorkerHost {
   private replaceVariables(content: string, variables: Record<string, any>): string {
     if (!content) return '';
     if (!variables || Object.keys(variables).length === 0) return content;
-    
+
     let result = content;
-    
+
     // 🔥 PASO 1: Reemplazar {{variable}} con su valor
     Object.entries(variables).forEach(([key, value]) => {
       const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
       result = result.replace(regex, value || '');
     });
-    
+
     // 🔥 PASO 2: Reemplazar palabras clave (opcional, según tu lógica)
     Object.entries(variables).forEach(([key, value]) => {
       if (value && this.VARIABLE_TO_WORDS[key]) {
@@ -179,7 +188,7 @@ export class NotificationProcessor extends WorkerHost {
         });
       }
     });
-    
+
     return result;
   }
 
@@ -206,6 +215,19 @@ export class NotificationProcessor extends WorkerHost {
 
     this.logger.log(`📨 Procesando notificación ${data.channel} para: ${data.recipient}`);
 
+    // ✅ FIX: Log FUERA de la transacción.
+    // Si la transacción hace rollback (error Nexo, créditos, etc), el log persiste
+    // y el catch puede actualizarlo a FAILED. Sin esto: log:null en getStatus().
+    const notificationLog = this.notificationLogsRepository.create({
+      companyId: data.companyId,
+      channel: data.channel,
+      recipient: data.recipient,
+      status: NotificationLogStatus.PENDING,
+      jobId: String(job.id),
+      attempts: 0,
+    });
+    await this.notificationLogsRepository.save(notificationLog);
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -213,7 +235,7 @@ export class NotificationProcessor extends WorkerHost {
     try {
       const creditsChannel = this.mapToCreditsChannel(data.channel);
       const creditsNotificationChannel = this.mapToCreditsNotificationChannel(data.channel);
-      
+
       const hasCredits = await this.creditsService.hasEnoughCredits(
         data.companyId,
         creditsNotificationChannel,
@@ -226,16 +248,6 @@ export class NotificationProcessor extends WorkerHost {
 
       this.logger.log(`💰 Créditos suficientes`);
 
-      const notificationLog = this.notificationLogsRepository.create({
-        companyId: data.companyId,
-        channel: data.channel,
-        recipient: data.recipient,
-        status: NotificationLogStatus.PENDING,
-        jobId: job.id,
-      });
-
-      await queryRunner.manager.save(notificationLog);
-
       // 🔥 PASO CRÍTICO: Procesar contenido con variables (CORREGIDO)
       const processedData = await this.processTemplateContent(data);
 
@@ -244,7 +256,7 @@ export class NotificationProcessor extends WorkerHost {
       }
 
       const costPerMessage = await this.creditsService.getChannelCost(creditsChannel);
-      
+
       const company = await queryRunner.manager.findOne(Company, {
         where: { id: data.companyId },
         lock: { mode: 'pessimistic_write' },
@@ -288,9 +300,15 @@ export class NotificationProcessor extends WorkerHost {
       }
 
       notificationLog.status = NotificationLogStatus.SENT;
+      notificationLog.attempts = (job.attemptsMade ?? 0) + 1;
       await queryRunner.manager.save(notificationLog);
 
       await queryRunner.commitTransaction();
+
+      // Auto-create or update the contact after a successful send.
+      // This never blocks or fails the notification — errors are only logged.
+      this.upsertContact(data.companyId, data.channel, data.recipient, data.variables)
+        .catch((err: any) => this.logger.warn(`⚠️ Could not upsert contact: ${err.message}`));
 
       setTimeout(() => {
         (global as any).eventEmitter?.emit('credits-updated', {
@@ -315,14 +333,15 @@ export class NotificationProcessor extends WorkerHost {
     } catch (error: any) {
       await queryRunner.rollbackTransaction();
 
-      const notificationLog = await this.notificationLogsRepository.findOne({
-        where: { jobId: job.id },
-      });
-      
-      if (notificationLog) {
+      // ✅ El log ya existe fuera de la transacción — actualizarlo directamente.
+      // Antes se hacía findOne(jobId) pero el log fue borrado por el rollback.
+      try {
         notificationLog.status = NotificationLogStatus.FAILED;
-        notificationLog.errorMessage = error.message;
+        notificationLog.errorMessage = this.sanitizeErrorMessage(error.message);
+        notificationLog.attempts = (job.attemptsMade ?? 0) + 1;
         await this.notificationLogsRepository.save(notificationLog);
+      } catch (logErr: any) {
+        this.logger.error(`⚠️ No se pudo actualizar el log a FAILED: ${logErr.message}`);
       }
 
       this.logger.error(`❌ Error procesando job ${job.id}:`, error);
@@ -351,10 +370,10 @@ export class NotificationProcessor extends WorkerHost {
           data.templateId,
           data.companyId,
         );
-        
+
         processedContent = template.content;
         this.logger.log(`📋 Usando template por ID: ${template.name || data.templateId}`);
-        
+
       } catch (error) {
         this.logger.warn(`⚠️ Template ${data.templateId} no encontrado: ${error.message}`);
         if (!data.content) {
@@ -365,13 +384,17 @@ export class NotificationProcessor extends WorkerHost {
         this.logger.log(`📋 Usando contenido directo como fallback`);
       }
     }
-    
+
     // CASO 2: Tiene templateAlias
     else if (data.templateAlias) {
       try {
         const templates = await this.templatesService.findAllByCompany(data.companyId);
-        const template = templates.find(t => t.alias === data.templateAlias);
-        
+        // ✅ FIX: normalizar a minúsculas antes de comparar.
+        // El alias se guarda en minúsculas (ej: "whatsapp_de_bienvenida")
+        // pero el usuario puede mandar cualquier case ("WHATSAPP_DE_BIENVENIDA").
+        const normalizedAlias = (data.templateAlias ?? '').toLowerCase().trim();
+        const template = templates.find(t => (t.alias ?? '').toLowerCase() === normalizedAlias);
+
         if (template) {
           processedContent = template.content;
           this.logger.log(`📋 Usando template por alias: ${data.templateAlias}`);
@@ -383,7 +406,7 @@ export class NotificationProcessor extends WorkerHost {
         this.logger.warn(`⚠️ Error buscando template por alias: ${error.message}`);
       }
     }
-    
+
     // CASO 3: Contenido directo (sin template)
     else {
       this.logger.log(`📋 Usando contenido directo (sin template)`);
@@ -392,27 +415,38 @@ export class NotificationProcessor extends WorkerHost {
     // 🔥 PASO CRÍTICO: SIEMPRE reemplazar variables si existen (CORREGIDO)
     if (data.variables && Object.keys(data.variables).length > 0) {
       this.logger.log(`🔄 Reemplazando variables: ${JSON.stringify(data.variables)}`);
-      
+
       // Reemplazar en el contenido
       const contentBefore = processedContent.substring(0, 100);
       processedContent = this.replaceVariables(processedContent, data.variables);
-      
+
       // Reemplazar en el asunto si tiene variables
       if (processedSubject && processedSubject.includes('{{')) {
         processedSubject = this.replaceVariables(processedSubject, data.variables);
       }
-      
+
       this.logger.log(`✅ Contenido antes: "${contentBefore}..."`);
       this.logger.log(`✅ Contenido después: "${processedContent.substring(0, 100)}..."`);
     } else {
       this.logger.log(`📝 Sin variables para reemplazar`);
     }
-    
+
+    // ✅ FIX CRÍTICO: Limpiar {{placeholders}} que no recibieron valor.
+    // Sin esto, Nexo recibe "{{orderNumber}}" literal → ERR_SENDING_WAPP_MSG (400).
+    const unresolved = processedContent.match(/\{\{[^}]+\}\}/g);
+    if (unresolved) {
+      this.logger.warn(
+        `⚠️ Placeholders sin valor: ${unresolved.join(', ')}. ` +
+        `Se eliminan del mensaje. Enviá todas las variables que usa el template.`
+      );
+      processedContent = processedContent.replace(/\{\{[^}]+\}\}/g, '');
+    }
+
     // Validar que hay contenido
     if (!processedContent || processedContent.trim() === '') {
       throw new Error('El contenido del mensaje no puede estar vacío');
     }
-    
+
     // Retornar datos procesados
     return {
       ...data,
@@ -483,16 +517,60 @@ export class NotificationProcessor extends WorkerHost {
     };
   }
 
+  // Mapa de mime type → extensión para Data URLs
+  // Nexo necesita que el campo "nombre" tenga extensión reconocible
+  // para que WhatsApp muestre el ícono correcto y no lo muestre como "Sin título"
+  private readonly MIME_TO_EXT: Record<string, string> = {
+    'application/pdf': '.pdf',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'video/mp4': '.mp4',
+    'video/quicktime': '.mov',
+    'audio/ogg': '.ogg',
+    'audio/mpeg': '.mp3',
+    'audio/mp4': '.m4a',
+  };
+
+  private readonly TYPE_TO_DEFAULT_NAME: Record<string, string> = {
+    image: 'imagen.jpg',
+    video: 'video.mp4',
+    audio: 'audio.ogg',
+    document: 'documento.pdf',
+  };
+
   private resolveFileName(attachment: {
-    url: string;
+    url?: string;
     type: string;
     fileName?: string;
     caption?: string;
   }): string {
+    // 1️⃣ Prioridad máxima: fileName explícito del request
     if (attachment.fileName && attachment.fileName.trim()) {
       return attachment.fileName.trim();
     }
 
+    // 2️⃣ Data URL: extraer mime type y construir nombre con extensión correcta
+    // Sin extensión reconocible WhatsApp muestra "Sin título" sin ícono de tipo
+    if (attachment.url?.startsWith('data:')) {
+      const mimeMatch = attachment.url.match(/^data:([^;]+);base64,/);
+      if (mimeMatch) {
+        const mime = mimeMatch[1].toLowerCase();
+        const ext = this.MIME_TO_EXT[mime];
+        if (ext) {
+          // Nombrar según el tipo de contenido + extensión correcta
+          const baseName = attachment.type === 'document' ? 'documento' :
+            attachment.type === 'image' ? 'imagen' :
+              attachment.type === 'video' ? 'video' :
+                attachment.type === 'audio' ? 'audio' : 'archivo';
+          return `${baseName}${ext}`;
+        }
+      }
+    }
+
+    // 3️⃣ URL pública: extraer nombre del path
     if (attachment.url && !attachment.url.startsWith('data:')) {
       try {
         const urlPath = new URL(attachment.url).pathname;
@@ -506,14 +584,8 @@ export class NotificationProcessor extends WorkerHost {
       }
     }
 
-    const genericNames: Record<string, string> = {
-      image: 'imagen.jpg',
-      video: 'video.mp4',
-      audio: 'audio.ogg',
-      document: 'documento.pdf',
-    };
-
-    return genericNames[attachment.type] || 'archivo';
+    // 4️⃣ Fallback genérico por tipo — siempre con extensión para evitar "Sin título"
+    return this.TYPE_TO_DEFAULT_NAME[attachment.type] ?? 'archivo.pdf';
   }
 
   private async downloadAndConvertToBase64(url: string): Promise<string> {
@@ -528,7 +600,7 @@ export class NotificationProcessor extends WorkerHost {
       }
 
       this.logger.log(`📥 Descargando: ${url.substring(0, 60)}...`);
-      
+
       const response = await firstValueFrom(
         this.httpService.get(url, {
           responseType: 'arraybuffer',
@@ -654,4 +726,115 @@ export class NotificationProcessor extends WorkerHost {
       throw error;
     }
   }
+
+  /**
+   * Convierte mensajes técnicos de error en mensajes amigables para el usuario.
+   * Los mensajes técnicos (ej: "Error en Nexo API: Request failed...") se guardan
+   * solo en los logs del servidor, no en el campo errorMessage del log de BD.
+   */
+  private sanitizeErrorMessage(raw: string): string {
+    if (!raw) return 'Error desconocido al enviar la notificación';
+
+    const msg = raw.toLowerCase();
+
+    // Errores de Nexo / WhatsApp
+    if (msg.includes('nexo') || msg.includes('err_sending_wapp') || msg.includes('whatsapp')) {
+      return 'El servicio de WhatsApp no está disponible en este momento. Intente más tarde.';
+    }
+
+    // Errores de red / timeout al llamar al proveedor
+    if (msg.includes('timeout') || msg.includes('econnreset') || msg.includes('econnrefused') ||
+      msg.includes('network') || msg.includes('socket')) {
+      return 'Error de conexión con el servicio de mensajería. Intente más tarde.';
+    }
+
+    // Error HTTP del proveedor
+    if (msg.includes('request failed') || msg.includes('status code 4') || msg.includes('status code 5')) {
+      return 'El proveedor de mensajería rechazó la solicitud. Verifique la configuración de la cuenta.';
+    }
+
+    // Créditos insuficientes
+    if (msg.includes('créditos') || msg.includes('creditos') || msg.includes('insuficiente')) {
+      return 'Créditos insuficientes para enviar la notificación. Recarga tu saldo.';
+    }
+
+    // Adjunto inválido
+    if (msg.includes('adjunto') || msg.includes('base64') || msg.includes('archivo')) {
+      return 'Error al procesar el archivo adjunto. Verifique que el formato sea compatible.';
+    }
+
+    // Template no encontrado
+    if (msg.includes('template') || msg.includes('plantilla')) {
+      return 'La plantilla seleccionada no fue encontrada. Verifique el alias o ID del template.';
+    }
+
+    // Mensaje vacío
+    if (msg.includes('vacío') || msg.includes('vacio') || msg.includes('empty')) {
+      return 'El contenido del mensaje está vacío. Verifique el template o el campo content.';
+    }
+
+    // Fallback: truncar el mensaje técnico a algo razonable
+    return raw.substring(0, 200);
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTO-UPSERT CONTACT
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * After a successful send, ensure the recipient exists as a Contact.
+   * - WHATSAPP/SMS → saves the number in the phone field
+   * - EMAIL        → saves the address in the email field
+   *
+   * If a contact with that phone/email already exists for this company,
+   * it updates the name (if variables contain one) but leaves everything else.
+   * Never throws — all errors are swallowed so the notification flow is safe.
+   */
+  private async upsertContact(
+    companyId: string,
+    channel: string,
+    recipient: string,
+    variables?: Record<string, any>,
+  ): Promise<void> {
+    // Normalize recipient: strip leading + for comparison
+    const isEmail = channel === 'EMAIL';
+    const whereClause = isEmail
+      ? { company_id: companyId, email: recipient }
+      : { company_id: companyId, phone: recipient };
+
+    // Name from variables — try common keys in order of preference
+    const name: string | undefined =
+      variables?.nombre ||
+      variables?.name ||
+      variables?.Name ||
+      undefined;
+
+    const existing = await this.contactRepository.findOne({ where: whereClause as any });
+
+    if (existing) {
+      // Only update the name if we have one and it's not already set
+      if (name && !existing.name) {
+        existing.name = name;
+        await this.contactRepository.save(existing);
+        this.logger.log(`📇 Contact updated: ${recipient} (name: ${name})`);
+      } else {
+        this.logger.log(`📇 Contact already exists: ${recipient} — no changes`);
+      }
+      return;
+    }
+
+    // Create new contact
+    const contact = this.contactRepository.create({
+      company_id: companyId,
+      phone: isEmail ? undefined : recipient,
+      email: isEmail ? recipient : undefined,
+      name: name ?? undefined,
+      metadata: {},
+    });
+
+    await this.contactRepository.save(contact);
+    this.logger.log(`📇 New contact created: ${recipient}${name ? ` (${name})` : ''}`);
+  }
+
 }

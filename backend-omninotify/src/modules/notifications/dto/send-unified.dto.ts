@@ -1,6 +1,7 @@
-import { 
+import {
   IsEnum, IsString, IsOptional, IsObject, IsUrl, IsIn,
-  ValidateIf, IsISO8601, IsArray, ValidateNested, IsBoolean 
+  ValidateIf, IsISO8601, IsArray, ValidateNested, IsBoolean,
+  IsInt, Min, Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -13,15 +14,15 @@ export enum NotificationChannel {
 
 // ─── Programación ─────────────────────────────────────────────────────────────
 export class SchedulingDto {
-  @ApiProperty({ 
+  @ApiProperty({
     description: '¿Es programado?',
-    example: false 
+    example: false
   })
   @IsBoolean()
   @IsOptional()
   is_scheduled?: boolean;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     description: 'Fecha de envío programado (ISO 8601 UTC)',
     example: '2026-02-20T15:00:00Z'
   })
@@ -32,14 +33,14 @@ export class SchedulingDto {
 
 // ─── Adjunto para WhatsApp ────────────────────────────────────────────────────
 export class AttachmentDto {
-  @ApiProperty({ 
+  @ApiProperty({
     description: 'URL pública del archivo (o data URL en base64)',
     example: 'https://cdn.example.com/image.jpg'
   })
   @IsString()
   url: string;
 
-  @ApiProperty({ 
+  @ApiProperty({
     description: 'Tipo de archivo',
     enum: ['image', 'video', 'document', 'audio'],
     example: 'image'
@@ -47,15 +48,15 @@ export class AttachmentDto {
   @IsIn(['image', 'video', 'document', 'audio'])
   type: 'image' | 'video' | 'document' | 'audio';
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     description: 'Nombre del archivo (opcional)',
-    example: 'factura.pdf' 
+    example: 'factura.pdf'
   })
   @IsOptional()
   @IsString()
-  filename?: string;
+  fileName?: string; // alias for title — both work the same way
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     description: 'Caption o texto que acompaña el archivo (solo WhatsApp)',
     example: 'Aquí está tu factura'
   })
@@ -63,13 +64,57 @@ export class AttachmentDto {
   @IsString()
   caption?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
+    description: 'File name the recipient will see in WhatsApp. ' +
+      'If not provided, auto-generated based on type (e.g. "document.pdf"). ' +
+      'Always set this to avoid "Untitled" files.',
+    example: 'Invoice_January_2026.pdf',
+  })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional({
     description: 'MIME type del archivo',
     example: 'image/jpeg'
   })
   @IsOptional()
   @IsString()
   mimeType?: string;
+}
+
+
+// ─── Reintentos automáticos ───────────────────────────────────────────────────
+export const MAX_RESEND_ATTEMPTS = 10;
+export const MIN_RETRY_INTERVAL_MINUTES = 1;
+export const MAX_RETRY_INTERVAL_MINUTES = 30;
+
+export class ResendDto {
+  @ApiProperty({
+    description: `Cuántas veces reintentar si el envío falla. Máximo: ${MAX_RESEND_ATTEMPTS}.`,
+    example: 3,
+    minimum: 1,
+    maximum: 10,
+  })
+  @IsInt()
+  @Min(1, { message: 'El mínimo es 1 intento' })
+  @Max(MAX_RESEND_ATTEMPTS, {
+    message: `El máximo permitido es ${MAX_RESEND_ATTEMPTS} intentos de reenvío`,
+  })
+  attempts: number;
+
+  @ApiPropertyOptional({
+    description: `Minutos de espera entre cada reintento. Mínimo: ${MIN_RETRY_INTERVAL_MINUTES} min. Máximo: ${MAX_RETRY_INTERVAL_MINUTES} min. Por defecto: 1 min.`,
+    example: 5,
+    minimum: 1,
+    maximum: 30,
+    default: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(MIN_RETRY_INTERVAL_MINUTES, { message: `El intervalo mínimo es ${MIN_RETRY_INTERVAL_MINUTES} minuto` })
+  @Max(MAX_RETRY_INTERVAL_MINUTES, { message: `El intervalo máximo es ${MAX_RETRY_INTERVAL_MINUTES} minutos` })
+  retryIntervalMinutes?: number;
 }
 
 // ─── DTO Principal ────────────────────────────────────────────────────────────
@@ -114,8 +159,8 @@ export class SendUnifiedNotificationDto {
   // ═════════════════════════════════════════════════════════════════════════
   // ❌ NO enviar companyId — se extrae automáticamente del JWT
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiProperty({ 
+
+  @ApiProperty({
     description: 'Canal de notificación',
     enum: NotificationChannel,
     example: NotificationChannel.WHATSAPP
@@ -123,7 +168,7 @@ export class SendUnifiedNotificationDto {
   @IsEnum(NotificationChannel)
   channel: NotificationChannel;
 
-  @ApiProperty({ 
+  @ApiProperty({
     description: 'Destinatario: email (para EMAIL) o número con formato E.164 (para SMS/WHATSAPP)',
     examples: {
       email: { value: 'cliente@example.com', summary: 'Email' },
@@ -136,8 +181,8 @@ export class SendUnifiedNotificationDto {
   // ═════════════════════════════════════════════════════════════════════════
   // Template: Soporta ALIAS (recomendado) o ID (compatible)
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiPropertyOptional({ 
+
+  @ApiPropertyOptional({
     description: '✅ RECOMENDADO: Alias de la plantilla (ej: "WELCOME_EMAIL")',
     example: 'ORDER_CONFIRMATION'
   })
@@ -145,7 +190,7 @@ export class SendUnifiedNotificationDto {
   @IsString()
   templateAlias?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     description: 'UUID de la plantilla (compatible con código antiguo)',
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
   })
@@ -156,8 +201,8 @@ export class SendUnifiedNotificationDto {
   // ═════════════════════════════════════════════════════════════════════════
   // CONTENIDO DIRECTO (sin template) - NUEVOS CAMPOS
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiPropertyOptional({ 
+
+  @ApiPropertyOptional({
     description: 'Contenido directo del mensaje (HTML para EMAIL, texto plano para SMS/WHATSAPP)',
     example: '<h1>¡Hola {{nombre}}!</h1><p>Bienvenido a {{empresa}}</p>'
   })
@@ -165,7 +210,7 @@ export class SendUnifiedNotificationDto {
   @IsString()
   content?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     description: 'Asunto del email (solo para canal EMAIL)',
     example: 'Bienvenido a nuestra plataforma'
   })
@@ -176,11 +221,11 @@ export class SendUnifiedNotificationDto {
   // ═════════════════════════════════════════════════════════════════════════
   // Variables para reemplazar en el template: {{ name }}, {{ orderNumber }}
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiPropertyOptional({ 
+
+  @ApiPropertyOptional({
     description: 'Variables para inyectar en la plantilla',
-    example: { 
-      name: 'María García', 
+    example: {
+      name: 'María García',
       orderNumber: 'ORD-12345',
       company: 'Mi Empresa S.A.'
     }
@@ -192,8 +237,8 @@ export class SendUnifiedNotificationDto {
   // ═════════════════════════════════════════════════════════════════════════
   // SCHEDULING — Envío inmediato o programado
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiPropertyOptional({ 
+
+  @ApiPropertyOptional({
     description: 'Configuración de programación (inmediato o futuro)',
     type: SchedulingDto,
     examples: {
@@ -202,9 +247,9 @@ export class SendUnifiedNotificationDto {
         summary: 'Envío inmediato'
       },
       scheduled: {
-        value: { 
-          is_scheduled: true, 
-          send_at: '2026-02-20T15:00:00Z' 
+        value: {
+          is_scheduled: true,
+          send_at: '2026-02-20T15:00:00Z'
         },
         summary: 'Envío programado'
       }
@@ -218,14 +263,14 @@ export class SendUnifiedNotificationDto {
   // ═════════════════════════════════════════════════════════════════════════
   // ATTACHMENTS — Solo para WhatsApp (imágenes, videos, documentos, audio)
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiPropertyOptional({ 
+
+  @ApiPropertyOptional({
     description: 'Archivos adjuntos (solo WhatsApp). Nexo API soporta un archivo a la vez.',
     type: [AttachmentDto],
     example: [{
       url: 'https://cdn.example.com/factura.pdf',
       type: 'document',
-      filename: 'Factura_123.pdf',
+      title: 'Invoice_January_2026.pdf',
       caption: 'Tu factura del mes'
     }]
   })
@@ -236,12 +281,26 @@ export class SendUnifiedNotificationDto {
   attachments?: AttachmentDto[];
 
   // ═════════════════════════════════════════════════════════════════════════
+  // RESEND — Control de reintentos automáticos
+  // ═════════════════════════════════════════════════════════════════════════
+
+  @ApiPropertyOptional({
+    description: `Reintentos si el envío falla. Máximo ${MAX_RESEND_ATTEMPTS} intentos. Intervalo: 1-30 minutos.`,
+    type: ResendDto,
+    example: { attempts: 3, retryIntervalMinutes: 5 },
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ResendDto)
+  resend?: ResendDto;
+
+  // ═════════════════════════════════════════════════════════════════════════
   // METADATA — Información adicional para logs o tracking interno
   // ═════════════════════════════════════════════════════════════════════════
-  
-  @ApiPropertyOptional({ 
+
+  @ApiPropertyOptional({
     description: 'Metadata adicional para logs internos',
-    example: { 
+    example: {
       sentFrom: 'web-app',
       userId: 'user-123',
       campaignId: 'campaign-456'
