@@ -1,5 +1,14 @@
 // src/modules/credits/entities/credit-transaction.entity.ts
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, CreateDateColumn, Index } from 'typeorm';
+
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  ManyToOne,
+  JoinColumn,
+  CreateDateColumn,
+  Index,
+} from 'typeorm';
 import { Company } from '../../companies/entities/company.entity';
 import { CreditRecharge } from './credit-recharge.entity';
 
@@ -8,13 +17,13 @@ export enum TransactionType {
   DEDUCTION = 'DEDUCTION', // Gasto de créditos (envío)
   REFUND = 'REFUND',       // Devolución de créditos
   BONUS = 'BONUS',         // Créditos bonus (promociones)
-  ADJUSTMENT = 'ADJUSTMENT' // Ajuste manual por administrador
+  ADJUSTMENT = 'ADJUSTMENT', // Ajuste manual por administrador
 }
 
 export enum NotificationChannel {
   EMAIL = 'EMAIL',
   SMS = 'SMS',
-  WHATSAPP = 'WHATSAPP'
+  WHATSAPP = 'WHATSAPP',
 }
 
 @Entity('Credit_Transactions')
@@ -34,24 +43,27 @@ export class CreditTransaction {
     type: 'enum',
     enum: TransactionType,
     nullable: true,
-    comment: 'Tipo de transacción: PURCHASE=compra, DEDUCTION=gasto, REFUND=devolución, BONUS=bonus, ADJUSTMENT=ajuste'
+    comment: 'Tipo de transacción: PURCHASE=compra, DEDUCTION=gasto, REFUND=devolución, BONUS=bonus, ADJUSTMENT=ajuste',
   })
   type: TransactionType;
 
-  @Column({ comment: 'Cantidad de créditos (positivo para compras, negativo para gastos)' })
+  @Column({
+    type: 'int',
+    comment: 'Cantidad de créditos (positivo para compras, negativo para gastos)',
+  })
   amount: number;
 
-  @Column({ name: 'balance_before', comment: 'Saldo antes de la transacción' })
+  @Column({ name: 'balance_before', type: 'int', comment: 'Saldo antes de la transacción' })
   balanceBefore: number;
 
-  @Column({ name: 'balance_after', comment: 'Saldo después de la transacción' })
+  @Column({ name: 'balance_after', type: 'int', comment: 'Saldo después de la transacción' })
   balanceAfter: number;
 
   @Column({
     type: 'enum',
     enum: NotificationChannel,
     nullable: true,
-    comment: 'Canal usado (solo para DEDUCTION)'
+    comment: 'Canal usado (solo para DEDUCTION)',
   })
   channel: NotificationChannel;
 
