@@ -1,4 +1,19 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+// src/modules/credits/credits.controller.ts
+
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Request,
+  HttpCode,
+  HttpStatus,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CreditsService } from './credits.service';
 import { GenerateQrDto } from './dto/generate-qr.dto';
@@ -6,12 +21,12 @@ import { GenerateUrlDto } from './dto/generate-url.dto';
 import { VerifyQrDto } from './dto/verify-qr.dto';
 import { VerifyTransactionDto } from './dto/verify-transaction.dto';
 import { PurchaseCreditsDto, PurchaseMethod } from './dto/purchase-credits.dto';
-import { 
-  BalanceResponseDto, 
-  RechargeResponseDto, 
+import {
+  BalanceResponseDto,
+  RechargeResponseDto,
   VerifyResponseDto,
   RechargeHistoryDto,
-  ChannelCostResponseDto 
+  ChannelCostResponseDto,
 } from './dto/credit-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -24,25 +39,41 @@ export class CreditsController {
 
   /**
    * Obtener saldo actual de créditos
+   * GET /api/credits/balance?companyId=xxx
    */
   @Get('balance')
   @ApiOperation({ summary: 'Obtener saldo actual de créditos' })
   @ApiResponse({ status: 200, description: 'Saldo obtenido correctamente', type: BalanceResponseDto })
   @ApiResponse({ status: 401, description: 'No autorizado' })
   @ApiResponse({ status: 404, description: 'Empresa no encontrada' })
-  async getBalance(@Request() req, @Query('companyId') companyId?: string): Promise<BalanceResponseDto> {
+  async getBalance(
+    @Request() req,
+    @Query('companyId') companyId?: string,
+  ): Promise<BalanceResponseDto> {
+    console.log('📡 GET /credits/balance');
+    console.log('  - Query companyId:', companyId);
+    console.log('  - User from token:', req.user);
+    
+    // 🔥 Prioridad: companyId del query param o del usuario autenticado
     const finalCompanyId = companyId || req.user?.company_id;
     
-    console.log('📡 GET /credits/balance - companyId:', finalCompanyId);
-    console.log('👤 Usuario autenticado:', req.user);
-    
     if (!finalCompanyId) {
-      throw new BadRequestException('No se pudo determinar el ID de la empresa');
+      console.error('❌ No se pudo determinar companyId');
+      throw new BadRequestException(
+        'No se pudo determinar el ID de la empresa. Por favor, proporciona companyId en la URL o asegúrate de estar autenticado.',
+      );
     }
     
-    const result = await this.creditsService.getBalance(finalCompanyId);
-    console.log('📡 Respuesta enviada:', result);
-    return result;
+    console.log('✅ Usando companyId:', finalCompanyId);
+    
+    try {
+      const result = await this.creditsService.getBalance(finalCompanyId);
+      console.log('📡 Respuesta:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Error en getBalance:', error.message);
+      throw error;
+    }
   }
 
   /**
@@ -57,7 +88,7 @@ export class CreditsController {
   @ApiResponse({ status: 500, description: 'Error al comunicarse con Yopago' })
   async purchaseCredits(
     @Request() req,
-    @Body() purchaseDto: PurchaseCreditsDto
+    @Body() purchaseDto: PurchaseCreditsDto,
   ): Promise<RechargeResponseDto> {
     const companyId = req.user?.company_id;
     console.log('📡 POST /credits/purchase - companyId:', companyId);
@@ -79,7 +110,7 @@ export class CreditsController {
   async generateQr(@Request() req, @Body() generateQrDto: GenerateQrDto) {
     const purchaseDto: PurchaseCreditsDto = {
       method: PurchaseMethod.QR,
-      ...generateQrDto
+      ...generateQrDto,
     };
     return this.purchaseCredits(req, purchaseDto);
   }
@@ -92,7 +123,7 @@ export class CreditsController {
   async generateUrl(@Request() req, @Body() generateUrlDto: GenerateUrlDto) {
     const purchaseDto: PurchaseCreditsDto = {
       method: PurchaseMethod.CARD,
-      ...generateUrlDto
+      ...generateUrlDto,
     };
     return this.purchaseCredits(req, purchaseDto);
   }
@@ -107,7 +138,7 @@ export class CreditsController {
   @ApiResponse({ status: 404, description: 'Recarga no encontrada' })
   async verifyQr(
     @Request() req,
-    @Body() verifyQrDto: VerifyQrDto
+    @Body() verifyQrDto: VerifyQrDto,
   ): Promise<VerifyResponseDto> {
     const companyId = req.user?.company_id;
     console.log('📡 POST /credits/verify-qr - companyId:', companyId);
@@ -130,7 +161,7 @@ export class CreditsController {
   @ApiResponse({ status: 404, description: 'Recarga no encontrada' })
   async verifyTransaction(
     @Request() req,
-    @Body() verifyDto: VerifyTransactionDto
+    @Body() verifyDto: VerifyTransactionDto,
   ): Promise<VerifyResponseDto> {
     const companyId = req.user?.company_id;
     console.log('📡 POST /credits/verify-transaction - companyId:', companyId);
@@ -167,13 +198,13 @@ export class CreditsController {
   }
 
   /**
-   * 🔥 Obtener imagen de QR por ID de recarga
+   * Obtener imagen de QR por ID de recarga
    */
   @Get('qr/:rechargeId')
   @ApiOperation({ summary: 'Obtener imagen de QR por ID de recarga' })
   async getQrImage(
     @Request() req,
-    @Param('rechargeId') rechargeId: string
+    @Param('rechargeId') rechargeId: string,
   ): Promise<{ qrImage: string; expiresAt: Date; amount: number; credits: number }> {
     const companyId = req.user?.company_id;
     console.log('📡 GET /credits/qr/:rechargeId - companyId:', companyId, 'rechargeId:', rechargeId);
@@ -191,12 +222,30 @@ export class CreditsController {
   @Get('channel-cost/:channel')
   @ApiOperation({ summary: 'Obtener costo por canal' })
   @ApiResponse({ status: 200, description: 'Costo obtenido correctamente', type: ChannelCostResponseDto })
-  async getChannelCost(@Param('channel') channel: string): Promise<ChannelCostResponseDto> {
-    const cost = await this.creditsService.getChannelCost(channel as any);
-    return {
-      channel,
-      cost,
-    };
+  async getChannelCost(
+    @Param('channel') channel: string,
+    @Request() req,
+  ): Promise<ChannelCostResponseDto> {
+    console.log('📡 GET /credits/channel-cost/:channel');
+    console.log('  - Channel:', channel);
+    console.log('  - User:', req.user?.email || 'unknown');
+    
+    try {
+      const cost = await this.creditsService.getChannelCost(channel as any);
+      console.log('✅ Costo obtenido:', { channel, cost });
+      return {
+        channel: channel as any,
+        cost,
+      };
+    } catch (error) {
+      console.error('❌ Error en getChannelCost:', error.message);
+      // En caso de error, retornar valor por defecto
+      const defaultCost = channel === 'SMS' ? 2 : 1;
+      return {
+        channel: channel as any,
+        cost: defaultCost,
+      };
+    }
   }
 
   /**
@@ -224,9 +273,9 @@ export class CreditsController {
     
     if (!body.transactionId && !body.transaction_id) {
       console.error('❌ [YOPAGO CALLBACK] Faltan datos requeridos');
-      return { 
-        success: false, 
-        message: 'Faltan datos requeridos: transactionId' 
+      return {
+        success: false,
+        message: 'Faltan datos requeridos: transactionId',
       };
     }
 
@@ -235,7 +284,7 @@ export class CreditsController {
     return {
       success: true,
       message: 'Pago procesado correctamente',
-      data: result
+      data: result,
     };
   }
 }
