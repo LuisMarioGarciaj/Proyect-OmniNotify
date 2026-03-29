@@ -87,8 +87,7 @@
     "typescript-eslint": "^8.20.0"
   },
   "overrides": {
-    "node-fetch": "2.6.7",
-    "uuid": "8.3.2"
+    "node-fetch": "2.6.7"
   },
   "jest": {
     "moduleFileExtensions": [

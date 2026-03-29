@@ -6,15 +6,18 @@ import { Company } from '../companies/entities/company.entity';
 import { CompanyProviderConfig } from '../providers/entities/company-provider-config.entity'; // ✅ NUEVO
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { OtpService } from '../auth/otp.service'; // Importar OtpService
+import { OtpToken } from '../auth/entities/otp-token.entity'; // Importar entidad
 
 @Module({
   imports: [TypeOrmModule.forFeature([
     User,
     Company,
     CompanyProviderConfig, 
+    OtpToken,
   ])],
   controllers: [UsersController],
-  providers: [UsersService],
+  providers: [UsersService,OtpService],
   exports: [UsersService],
 })
 export class UsersModule {}

@@ -9,13 +9,15 @@ import { PassportModule } from '@nestjs/passport';
 import { CompaniesModule } from '../companies/companies.module'; // <-- IMPORTAR
 import { OtpService } from './otp.service';
 import { OtpToken } from './entities/otp-token.entity';
+import { ResetPasswordToken } from './entities/reset-token.entity'; 
+import { ResetPasswordService } from './reset-password.service';
 
 @Module({
   imports: [
     UsersModule,
     CompaniesModule,
     PassportModule,
-    TypeOrmModule.forFeature([OtpToken]),
+    TypeOrmModule.forFeature([OtpToken,ResetPasswordToken]),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'OMNINOTIFY_SECRET_123456',
       signOptions: {
@@ -24,7 +26,7 @@ import { OtpToken } from './entities/otp-token.entity';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, OtpService], 
+  providers: [AuthService, JwtStrategy, OtpService,ResetPasswordService], 
   exports: [JwtStrategy],
 })
 export class AuthModule {}

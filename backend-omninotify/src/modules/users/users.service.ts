@@ -4,6 +4,7 @@ import {
   Logger,
   ConflictException,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -13,8 +14,8 @@ import { User } from './entities/user.entity';
 import { Company, CompanyStatus } from '../companies/entities/company.entity';
 import { CompanyProviderConfig } from '../providers/entities/company-provider-config.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { OtpService } from '../auth/otp.service'; // Importar OtpService
 
-// provider_id = 1 → NEXO_WHATSAPP (igual que en companies.service.ts)
 const NEXO_WHATSAPP_PROVIDER_ID = 1;
 
 @Injectable()
@@ -25,15 +26,12 @@ export class UsersService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
 
-    // ✅ Necesario para que TypeORM registre CompanyProviderConfig en el módulo
-    // (la inserción real se hace via queryRunner.manager dentro de la transacción)
     @InjectRepository(CompanyProviderConfig)
     private readonly providerConfigRepo: Repository<CompanyProviderConfig>,
 
     private readonly dataSource: DataSource,
-  ) {
-    this.testConnection();
-  }
+    private readonly otpService: OtpService, // Inyectar OtpService
+  ) {}
 
   async testConnection() {
     try {
@@ -70,7 +68,7 @@ export class UsersService {
 
       await queryRunner.manager.save(companyInstance);
 
-      // ── 2. Crear el Usuario ──────────────────────────────────────────────
+      // ── 2. Crear el Usuario (INACTIVO hasta verificar email) ──────────────────
       const hashedPassword = await bcrypt.hash(password, 10);
 
       const userInstance = queryRunner.manager.create(User, {
@@ -80,14 +78,13 @@ export class UsersService {
         email,
         password: hashedPassword,
         role: role || 'OPERATOR',
-        status: 'ACTIVE',
+        status: 'PENDING_VERIFICATION', // 🔥 Cambiar: PENDING_VERIFICATION en lugar de ACTIVE
+        is_first_login: true,
       });
 
       const savedUser = await queryRunner.manager.save(userInstance);
 
       // ── 3. Crear la config de Nexo WhatsApp para esta empresa ──
-      // Todas las empresas usan el mismo token de Nexo (puede sobreescribirse desde Settings).
-
       const providerConfig = queryRunner.manager.create(CompanyProviderConfig, {
         id: uuidv4(),
         companyId: companyId,
@@ -106,13 +103,34 @@ export class UsersService {
       await queryRunner.manager.save(providerConfig);
 
       this.logger.log(
-        `✅ Registro completo: empresa ${companyId} + usuario ${savedUser.id} + config Nexo creada`,
+        `✅ Registro completo: empresa ${companyId} + usuario ${savedUser.id} (PENDING_VERIFICATION)`,
       );
 
       await queryRunner.commitTransaction();
 
+      // ── 4. Enviar OTP de verificación (después de commit) ──────────────────
+      const smtpConfigured = !!(
+        process.env.SMTP_HOST &&
+        process.env.SMTP_USER &&
+        process.env.SMTP_PASS
+      );
+
+      if (smtpConfigured) {
+        const code = this.otpService.generateCode();
+        await this.otpService.saveOtp(savedUser.id, code);
+        await this.otpService.sendVerificationEmail(email, name, code);
+        this.logger.log(`📧 OTP de verificación enviado a ${email}`);
+      } else {
+        this.logger.warn(`⚠️ SMTP no configurado - usuario ${email} creado sin verificación`);
+        // Si no hay SMTP, activar automáticamente (para desarrollo)
+        await this.userRepo.update(savedUser.id, { status: 'ACTIVE' });
+      }
+
       const { password: _, ...result } = savedUser;
-      return result;
+      return {
+        ...result,
+        requires_verification: smtpConfigured, // Indicar si requiere verificación
+      };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error(`❌ Error en registro: ${error.message}`);
@@ -120,6 +138,58 @@ export class UsersService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  // Nuevo método: verificar email con OTP
+  async verifyEmail(userId: string, code: string): Promise<{ success: boolean; message: string }> {
+    const isValid = await this.otpService.verifyOtp(userId, code);
+    
+    if (!isValid) {
+      throw new BadRequestException('Código inválido o expirado');
+    }
+
+    const user = await this.findById(userId);
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    if (user.status === 'ACTIVE') {
+      return { success: true, message: 'Cuenta ya verificada' };
+    }
+
+    // Activar la cuenta
+    await this.userRepo.update(userId, { status: 'ACTIVE' });
+    this.logger.log(`✅ Usuario ${userId} verificado y activado`);
+
+    return { success: true, message: 'Cuenta verificada exitosamente' };
+  }
+
+  // Resend OTP
+  async resendVerificationOtp(userId: string): Promise<{ message: string }> {
+    const user = await this.findById(userId);
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    if (user.status === 'ACTIVE') {
+      throw new BadRequestException('La cuenta ya está activa');
+    }
+
+    const smtpConfigured = !!(
+      process.env.SMTP_HOST &&
+      process.env.SMTP_USER &&
+      process.env.SMTP_PASS
+    );
+
+    if (!smtpConfigured) {
+      throw new BadRequestException('Servicio de email no disponible');
+    }
+
+    const code = this.otpService.generateCode();
+    await this.otpService.saveOtp(userId, code);
+    await this.otpService.sendVerificationEmail(user.email, user.name, code);
+
+    return { message: 'Nuevo código enviado a tu correo' };
   }
 
   async findByEmail(email: string) {
@@ -142,5 +212,9 @@ export class UsersService {
 
   async markFirstLoginDone(userId: string): Promise<void> {
     await this.userRepo.update(userId, { is_first_login: false });
+  }
+
+  async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+    await this.userRepo.update(userId, { password: hashedPassword });
   }
 }

@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom"; // <-- AÑADE ESTO
 import OtpVerification from "./OtpVerification";
+import EmailVerification from "./EmailVerification";
+import ForgotPasswordModal from "./ForgotPasswordModal";
+import FirstLoginWizard from "./FirstLoginWizard"; //
 
 interface LoginFormData {
   email: string;
@@ -127,6 +130,18 @@ const LoginForm: React.FC = () => {
     email: string;
   } | null>(null);
 
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [showEmailVerification, setShowEmailVerification] = useState(false);
+  const [emailVerificationData, setEmailVerificationData] = useState<{
+    userId: string;
+    email: string;
+  } | null>(null);
+
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizardUserName, setWizardUserName] = useState('');
+  const [wizardCompanyName, setWizardCompanyName] = useState('');
+  const [wizardCompanyId, setWizardCompanyId] = useState('');
+
   // Cargar lenguaje preferido del localStorage al iniciar
   useEffect(() => {
     const savedLanguage = localStorage.getItem("preferredLanguage") as Language;
@@ -186,13 +201,34 @@ const LoginForm: React.FC = () => {
       const data = await response.json();
 
       if (!response.ok) {
-        // Manejo de errores controlados del backend (401, 404, etc.)
-        if (data.access_token) {
-          console.warn("⚠️ Error secundario del servidor:", data.message);
-        } else {
-          // Si NO hay token, entonces sí es un error de login real
-          throw new Error(data.message || t.invalidCredentials);
+        console.log("Error response:", data);
+        // 🔥 NUEVO: Manejar el caso de cuenta no verificada
+        // Manejar el caso de cuenta no verificada
+        if (
+          data.message &&
+          (data.message.includes("verifica") || data.message.includes("verify"))
+        ) {
+          // Verificar si el error contiene los datos de verificación
+          if (data.requires_verification && data.user_id) {
+            setEmailVerificationData({
+              userId: data.user_id,
+              email: data.email,
+            });
+            setShowEmailVerification(true);
+            setIsLoading(false);
+
+            setMessageType("error");
+            setLoginMessage(
+              language === "es"
+                ? "Tu cuenta no está verificada. Hemos enviado un nuevo código a tu correo."
+                : "Your account is not verified. We have sent a new code to your email.",
+            );
+            return;
+          }
         }
+
+        // Manejo de errores controlados del backend
+        throw new Error(data.message || t.invalidCredentials);
       }
 
       // --- LÓGICA DE ÉXITO UNIFICADA ---
@@ -220,6 +256,7 @@ const LoginForm: React.FC = () => {
           role: data.user.role,
           company_id: data.user.company_id,
           company_name: data.user.company_name || "", // <-- AÑADIDO
+          is_first_login: data.user.is_first_login || false,
         };
       } else {
         // Si la respuesta es plana
@@ -230,6 +267,7 @@ const LoginForm: React.FC = () => {
           role: data.role,
           company_id: data.company_id,
           company_name: data.company_name || "", // <-- AÑADIDO
+          is_first_login: data.is_first_login || false,
         };
       }
       userData.credits = 150;
@@ -246,9 +284,17 @@ const LoginForm: React.FC = () => {
       setMessageType("success");
       setLoginMessage(t.loginSuccess);
 
-      setTimeout(() => {
-        navigate("/dashboard");
-      }, 1000);
+      // 🔥 VERIFICAR SI ES PRIMER LOGIN Y MOSTRAR WIZARD
+      if (userData.is_first_login === true) {
+        setWizardUserName(userData.name);
+        setWizardCompanyName(userData.company_name);
+        setWizardCompanyId(userData.company_id);
+        setShowWizard(true);
+      } else {
+        setTimeout(() => {
+          navigate("/dashboard");
+        }, 1000);
+      }
     } catch (error: any) {
       console.error("❌ Error en login:", error);
       setMessageType("error");
@@ -292,19 +338,77 @@ const LoginForm: React.FC = () => {
       }));
     }
   }, []);
-  if (showOtp && otpData) {
+  if (showWizard) {
   return (
-    <OtpVerification
-      userId={otpData.userId}
-      email={otpData.email}
-      onBack={() => { setShowOtp(false); setOtpData(null); }}
+    <FirstLoginWizard
+      isOpen={true}
+      onClose={() => {
+        setShowWizard(false);
+        navigate('/dashboard');
+      }}
+      onComplete={() => {
+        setShowWizard(false);
+        navigate('/dashboard');
+      }}
+      userName={wizardUserName}
+      companyName={wizardCompanyName}
+      companyId={wizardCompanyId}
     />
   );
 }
 
+  if (showOtp && otpData) {
+    return (
+      <OtpVerification
+        userId={otpData.userId}
+        email={otpData.email}
+        onBack={() => {
+          setShowOtp(false);
+          setOtpData(null);
+        }}
+      />
+    );
+  }
+
+  if (showEmailVerification && emailVerificationData) {
+    return (
+      <EmailVerification
+        userId={emailVerificationData.userId}
+        email={emailVerificationData.email}
+        onBack={() => {
+          setShowEmailVerification(false);
+          setEmailVerificationData(null);
+        }}
+        onVerificationSuccess={() => {
+        // 🔥 Después de verificar exitosamente, volver al login
+        setShowEmailVerification(false);
+        setEmailVerificationData(null);
+        setMessageType("success");
+        setLoginMessage(
+          language === 'es' 
+            ? 'Cuenta verificada exitosamente. Ya puedes iniciar sesión.'
+            : 'Account verified successfully. You can now log in.'
+        );
+      }}
+      redirectAfterSuccess={false}
+      />
+    );
+  }
+
+  if (showOtp && otpData) {
+    return (
+      <OtpVerification
+        userId={otpData.userId}
+        email={otpData.email}
+        onBack={() => {
+          setShowOtp(false);
+          setOtpData(null);
+        }}
+      />
+    );
+  }
 
   return (
-    
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full flex justify-center">
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative">
@@ -433,6 +537,10 @@ const LoginForm: React.FC = () => {
                   </label>
                   <a
                     href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setShowForgotPassword(true);
+                    }}
                     className="text-sm text-blue-600 hover:text-blue-800 transition"
                   >
                     {t.forgotPassword}
@@ -577,6 +685,14 @@ const LoginForm: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showForgotPassword && (
+        <ForgotPasswordModal
+          isOpen={showForgotPassword}
+          onClose={() => setShowForgotPassword(false)}
+          language={language}
+        />
+      )}
     </div>
   );
 };

@@ -26,8 +26,8 @@ export class User {
 
   @Column({
     type: 'enum',
-    enum: ['ACTIVE', 'DISABLED'],
-    default: 'ACTIVE',
+    enum: ['PENDING_VERIFICATION','ACTIVE', 'DISABLED'],
+    default: 'PENDING_VERIFICATION',
   })
   status: string;
 

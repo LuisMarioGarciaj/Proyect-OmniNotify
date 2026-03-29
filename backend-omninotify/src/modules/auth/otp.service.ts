@@ -142,4 +142,66 @@ export class OtpService {
 </div>
 </body></html>`;
   }
+
+  // src/modules/auth/otp.service.ts
+// Añadir este método a la clase existente
+
+async sendVerificationEmail(email: string, name: string, code: string): Promise<void> {
+  await this.transporter.sendMail({
+    from: `"Omni-Notify" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: `Verifica tu cuenta en Omni-Notify 📧`,
+    html: this.buildVerificationEmailHtml(name, code),
+  });
+}
+
+private buildVerificationEmailHtml(name: string, code: string): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f9ff;padding:40px 20px}
+  .card{max-width:480px;margin:0 auto;background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 8px 40px rgba(37,99,235,.12)}
+  .header{background:linear-gradient(135deg,#2563eb,#1e40af);padding:48px 32px;text-align:center}
+  .emoji{font-size:52px;display:block;margin-bottom:16px}
+  .header h1{color:#fff;font-size:26px;font-weight:800;margin-bottom:8px}
+  .header p{color:rgba(255,255,255,.85);font-size:15px}
+  .badge{display:inline-block;background:rgba(255,255,255,.2);color:#fff;font-size:12px;font-weight:600;padding:6px 16px;border-radius:20px;margin-top:16px}
+  .body{padding:36px 32px}
+  .welcome-msg{font-size:17px;color:#111827;font-weight:600;margin-bottom:12px}
+  .desc{font-size:14px;color:#6b7280;line-height:1.7;margin-bottom:28px}
+  .otp-section{background:linear-gradient(135deg,#eff6ff,#e0e7ff);border:2px solid #c7d2fe;border-radius:16px;padding:24px;text-align:center;margin-bottom:8px}
+  .otp-title{font-size:13px;color:#4f46e5;font-weight:600;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+  .code{font-size:40px;font-weight:800;letter-spacing:12px;color:#2563eb;font-variant-numeric:tabular-nums}
+  .timer{display:inline-flex;align-items:center;gap:6px;background:#fef3c7;color:#92400e;font-size:12px;font-weight:600;padding:6px 14px;border-radius:20px;margin-top:16px}
+  .footer{background:#f9fafb;padding:20px 32px;text-align:center;border-top:1px solid #f3f4f6}
+  .footer p{font-size:12px;color:#9ca3af}
+</style></head>
+<body>
+<div class="card">
+  <div class="header">
+    <span class="emoji">📧</span>
+    <h1>¡Verifica tu cuenta, ${name}!</h1>
+    <p>Completa tu registro en Omni-Notify</p>
+    <span class="badge">✦ VERIFICACIÓN REQUERIDA</span>
+  </div>
+  <div class="body">
+    <p class="welcome-msg">¡Bienvenid@ a Omni-Notify! 🚀</p>
+    <p class="desc">Para activar tu cuenta y empezar a usar la plataforma, necesitamos verificar tu dirección de correo electrónico.</p>
+    <p style="font-size:13px;color:#374151;margin-bottom:16px;font-weight:500">
+      Ingresa el siguiente código de verificación:
+    </p>
+    <div class="otp-section">
+      <div class="otp-title">Tu código de verificación</div>
+      <div class="code">${code}</div>
+      <div class="timer">⏱ Válido por 5 minutos</div>
+    </div>
+    <p class="desc" style="margin-top:20px;font-size:12px">Si no solicitaste esta cuenta, puedes ignorar este mensaje.</p>
+  </div>
+  <div class="footer">
+    <p>© ${new Date().getFullYear()} Omni-Notify · Plataforma de notificaciones inteligente</p>
+  </div>
+</div>
+</body></html>`;
+}
 }

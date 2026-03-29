@@ -21,6 +21,8 @@ import SMSConfiguration from "./pages/SMSConfiguration";
 import RechargeCredits from "./pages/Credits/RechargeCredits";
 import RoleProtectedRoute from "./components/RoleProtectedRoute";
 import RoleGuard from "./components/RoleGuard";
+import ResetPassword from "./pages/ResetPassword";
+
 function App() {
   // Obtenemos los datos del usuario guardados al iniciar sesión
   const userData = JSON.parse(localStorage.getItem("user_data") || "{}");
@@ -134,6 +136,7 @@ function App() {
             }
           />
         </Route>
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

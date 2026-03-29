@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Mail, RefreshCw, ArrowLeft } from 'lucide-react';
+import FirstLoginWizard from './FirstLoginWizard';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
@@ -17,6 +18,10 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(300); // 5 min
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const [showWizard, setShowWizard] = useState(false);
+  const [userName, setUserName] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [companyId, setCompanyId] = useState('');
 
   useEffect(() => {
     inputRefs.current[0]?.focus();
@@ -78,18 +83,29 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'Código inválido');
 
-      // Guardar sesión — mismo flujo que el login normal
-      localStorage.setItem('auth_token', data.access_token);
-      localStorage.setItem('user_data', JSON.stringify({
+      // Guardar datos del usuario
+      const userData = {
         id: data.user.id,
         email: data.user.email,
         name: data.user.name,
         role: data.user.role,
         company_id: data.user.company_id,
         company_name: data.user.company_name || '',
-      }));
+      };
 
-      navigate('/dashboard');
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      
+      setUserName(userData.name);
+      setCompanyName(userData.company_name);
+      setCompanyId(userData.company_id);
+
+      // Mostrar wizard si es primer login
+      if (data.user.is_first_login === true) {
+        setShowWizard(true);
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err: any) {
       setError(err.message || 'Código inválido o expirado');
       setDigits(['', '', '', '', '', '']);
@@ -100,6 +116,26 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
   };
 
   const maskedEmail = email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
+  
+  // Mostrar wizard si es necesario
+  if (showWizard) {
+    return (
+      <FirstLoginWizard
+        isOpen={true}
+        onClose={() => {
+          setShowWizard(false);
+          navigate('/dashboard');
+        }}
+        onComplete={() => {
+          setShowWizard(false);
+          navigate('/dashboard');
+        }}
+        userName={userName}
+        companyName={companyName}
+        companyId={companyId}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
