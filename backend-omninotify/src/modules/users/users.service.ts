@@ -1,10 +1,12 @@
 // src/modules/users/users.service.ts
 import {
   Injectable,
+
   Logger,
   ConflictException,
   InternalServerErrorException,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -17,6 +19,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { OtpService } from '../auth/otp.service'; // Importar OtpService
 
 const NEXO_WHATSAPP_PROVIDER_ID = 1;
+const NAME_REGEX = /^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s]+$/;
 
 @Injectable()
 export class UsersService {
@@ -213,8 +216,77 @@ export class UsersService {
   async markFirstLoginDone(userId: string): Promise<void> {
     await this.userRepo.update(userId, { is_first_login: false });
   }
+  // ── Actualizar perfil (nombre) ────────────────────────────────────────────
+  async updateProfile(userId: string, data: { name?: string }): Promise<{ success: boolean; message: string; user: Partial<User> }> {
+    const user = await this.findById(userId);
+    if (!user) throw new BadRequestException('Usuario no encontrado');
+ 
+    if (data.name !== undefined) {
+      const trimmed = data.name.trim();
+ 
+      if (!trimmed) {
+        throw new BadRequestException('El nombre no puede estar vacío');
+      }
+      if (trimmed.length < 2) {
+        throw new BadRequestException('El nombre debe tener al menos 2 caracteres');
+      }
+      if (trimmed.length > 80) {
+        throw new BadRequestException('El nombre no puede superar 80 caracteres');
+      }
+      if (!NAME_REGEX.test(trimmed)) {
+        throw new BadRequestException(
+          'El nombre solo puede contener letras y espacios (sin números ni caracteres especiales)',
+        );
+      }
+ 
+      await this.userRepo.update(userId, { name: trimmed });
+      this.logger.log(`✅ Nombre actualizado para usuario ${userId}: "${trimmed}"`);
+    }
+ 
+    const updated = await this.findById(userId);
+    const { password: _, ...safeUser } = updated as any;
+ 
+    return {
+      success: true,
+      message: 'Perfil actualizado correctamente',
+      user: safeUser,
+    };
+  }
+   // ── Cambiar contraseña ────────────────────────────────────────────────────
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const user = await this.findById(userId);
+    if (!user) throw new BadRequestException('Usuario no encontrado');
+ 
+    // Validar contraseña actual
+    const isCurrentValid = await this.validatePassword(currentPassword, user.password);
+    if (!isCurrentValid) {
+      throw new UnauthorizedException('La contraseña actual es incorrecta');
+    }
+ 
+    // Validar que la nueva no sea igual a la actual
+    const isSame = await bcrypt.compare(newPassword, user.password);
+    if (isSame) {
+      throw new BadRequestException('La nueva contraseña debe ser diferente a la actual');
+    }
+ 
+    // Validar longitud mínima
+    if (newPassword.length < 6) {
+      throw new BadRequestException('La nueva contraseña debe tener al menos 6 caracteres');
+    }
+ 
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await this.userRepo.update(userId, { password: hashedPassword });
+    this.logger.log(`✅ Contraseña actualizada para usuario ${userId}`);
+ 
+    return { success: true, message: 'Contraseña actualizada correctamente' };
+  }
 
   async updatePassword(userId: string, hashedPassword: string): Promise<void> {
     await this.userRepo.update(userId, { password: hashedPassword });
   }
+
 }

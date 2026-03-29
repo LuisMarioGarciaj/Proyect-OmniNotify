@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState ,useEffect} from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -22,11 +22,34 @@ import RechargeCredits from "./pages/Credits/RechargeCredits";
 import RoleProtectedRoute from "./components/RoleProtectedRoute";
 import RoleGuard from "./components/RoleGuard";
 import ResetPassword from "./pages/ResetPassword";
+import FirstLoginWizard from "./components/FirstLoginWizard";
 
 function App() {
   // Obtenemos los datos del usuario guardados al iniciar sesión
-  const userData = JSON.parse(localStorage.getItem("user_data") || "{}");
-  const companyId = userData.company_id;
+  // ← NUEVO: Lee si debe mostrar el wizard (persiste entre recargas)
+  const [showWizard, setShowWizard] = useState(() => {
+    return localStorage.getItem("show_wizard") === "true";
+  });
+     useEffect(() => {
+    // También polling ligero por si el evento storage no dispara en misma pestaña
+    const interval = setInterval(() => {
+      if (localStorage.getItem("show_wizard") === "true" && !showWizard) {
+        setShowWizard(true);
+      }
+    }, 300);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [showWizard]);
+
+
+  const handleWizardComplete = () => {
+    localStorage.removeItem("show_wizard");
+    setShowWizard(false);
+  };
+  const currentUserData = JSON.parse(localStorage.getItem("user_data") || "{}");
+  const companyId = currentUserData.company_id;
 
   return (
     <Router>
@@ -96,7 +119,7 @@ function App() {
             path="company"
             element={
               <RoleGuard requiredPermission="company">
-                <CompanyPage user={userData} />
+                <CompanyPage user={currentUserData} />
               </RoleGuard>
             }
           />
@@ -140,6 +163,17 @@ function App() {
 
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
+       {/* ← NUEVO: Wizard montado FUERA de las rutas, sobrevive navegación */}
+      {showWizard && (
+        <FirstLoginWizard
+          isOpen={true}
+          onClose={handleWizardComplete}
+          onComplete={handleWizardComplete}
+          userName={currentUserData.name || ""}
+          companyName={currentUserData.company_name || ""}
+          companyId={currentUserData.company_id || ""}
+        />
+      )}
     </Router>
   );
 }

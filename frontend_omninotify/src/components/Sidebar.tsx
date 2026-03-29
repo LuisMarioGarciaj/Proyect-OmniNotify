@@ -47,7 +47,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user }) => {
     { id: 'contacts', label: 'Contacts', icon: <Users size={20} />, path: '/contacts' },
     { id: 'tags', label: 'Tags', icon: <Tag size={20} />, path: '/tags' },
     { id: 'notifications', label: 'Send Notifications', icon: <Bell size={20} />, path: '/notifications' },
-    { id: 'credits', label: 'Mis Créditos', icon: <Coins size={20} />, path: '/credits/recharge' },
+    { id: 'credits', label: 'My Credits', icon: <Coins size={20} />, path: '/credits/recharge' },
     { id: 'profile', label: 'Profile', icon: <User size={20} />, path: '/profile' },
     { id: 'sms-config', label: 'Configuración SMS', icon: <MessageSquare size={20} />, path: '/sms-configuration' },
     { id: 'email-configuration', label: 'Configuración Email', icon: <Settings size={20} />, path: '/email-configuration' },

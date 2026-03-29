@@ -138,9 +138,9 @@ const LoginForm: React.FC = () => {
   } | null>(null);
 
   const [showWizard, setShowWizard] = useState(false);
-  const [wizardUserName, setWizardUserName] = useState('');
-  const [wizardCompanyName, setWizardCompanyName] = useState('');
-  const [wizardCompanyId, setWizardCompanyId] = useState('');
+  const [wizardUserName, setWizardUserName] = useState("");
+  const [wizardCompanyName, setWizardCompanyName] = useState("");
+  const [wizardCompanyId, setWizardCompanyId] = useState("");
 
   // Cargar lenguaje preferido del localStorage al iniciar
   useEffect(() => {
@@ -286,14 +286,10 @@ const LoginForm: React.FC = () => {
 
       // 🔥 VERIFICAR SI ES PRIMER LOGIN Y MOSTRAR WIZARD
       if (userData.is_first_login === true) {
-        setWizardUserName(userData.name);
-        setWizardCompanyName(userData.company_name);
-        setWizardCompanyId(userData.company_id);
-        setShowWizard(true);
+        localStorage.setItem("show_wizard", "true"); // ← persiste
+        navigate("/dashboard");
       } else {
-        setTimeout(() => {
-          navigate("/dashboard");
-        }, 1000);
+        setTimeout(() => navigate("/dashboard"), 1000);
       }
     } catch (error: any) {
       console.error("❌ Error en login:", error);
@@ -339,23 +335,23 @@ const LoginForm: React.FC = () => {
     }
   }, []);
   if (showWizard) {
-  return (
-    <FirstLoginWizard
-      isOpen={true}
-      onClose={() => {
-        setShowWizard(false);
-        navigate('/dashboard');
-      }}
-      onComplete={() => {
-        setShowWizard(false);
-        navigate('/dashboard');
-      }}
-      userName={wizardUserName}
-      companyName={wizardCompanyName}
-      companyId={wizardCompanyId}
-    />
-  );
-}
+    return (
+      <FirstLoginWizard
+        isOpen={true}
+        onClose={() => {
+          setShowWizard(false);
+          navigate("/dashboard");
+        }}
+        onComplete={() => {
+          setShowWizard(false);
+          navigate("/dashboard");
+        }}
+        userName={wizardUserName}
+        companyName={wizardCompanyName}
+        companyId={wizardCompanyId}
+      />
+    );
+  }
 
   if (showOtp && otpData) {
     return (
@@ -380,17 +376,17 @@ const LoginForm: React.FC = () => {
           setEmailVerificationData(null);
         }}
         onVerificationSuccess={() => {
-        // 🔥 Después de verificar exitosamente, volver al login
-        setShowEmailVerification(false);
-        setEmailVerificationData(null);
-        setMessageType("success");
-        setLoginMessage(
-          language === 'es' 
-            ? 'Cuenta verificada exitosamente. Ya puedes iniciar sesión.'
-            : 'Account verified successfully. You can now log in.'
-        );
-      }}
-      redirectAfterSuccess={false}
+          // 🔥 Después de verificar exitosamente, volver al login
+          setShowEmailVerification(false);
+          setEmailVerificationData(null);
+          setMessageType("success");
+          setLoginMessage(
+            language === "es"
+              ? "Cuenta verificada exitosamente. Ya puedes iniciar sesión."
+              : "Account verified successfully. You can now log in.",
+          );
+        }}
+        redirectAfterSuccess={false}
       />
     );
   }

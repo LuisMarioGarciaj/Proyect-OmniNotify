@@ -257,12 +257,13 @@ const FirstLoginWizard: React.FC<FirstLoginWizardProps> = ({
   };
 
   const handleNavigate = (path: string) => {
-    onComplete();
+    // onComplete();
     navigate(path);
+    if (path === '/dashboard') onComplete();
   };
 
   const handleCreateAction = (type: 'contact' | 'tag' | 'template') => {
-    onComplete();
+    // onComplete();
     if (type === 'contact') {
       navigate('/contacts');
     } else if (type === 'tag') {

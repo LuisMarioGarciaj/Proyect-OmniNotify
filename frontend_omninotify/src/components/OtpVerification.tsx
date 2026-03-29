@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, Mail, RefreshCw, ArrowLeft } from 'lucide-react';
-import FirstLoginWizard from './FirstLoginWizard';
+import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { ShieldCheck, Mail, RefreshCw, ArrowLeft } from "lucide-react";
+import FirstLoginWizard from "./FirstLoginWizard";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:3000/api";
 
 interface OtpVerificationProps {
   userId: string;
@@ -11,17 +12,21 @@ interface OtpVerificationProps {
   onBack: () => void;
 }
 
-const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack }) => {
+const OtpVerification: React.FC<OtpVerificationProps> = ({
+  userId,
+  email,
+  onBack,
+}) => {
   const navigate = useNavigate();
-  const [digits, setDigits] = useState(['', '', '', '', '', '']);
+  const [digits, setDigits] = useState(["", "", "", "", "", ""]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [countdown, setCountdown] = useState(300); // 5 min
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [showWizard, setShowWizard] = useState(false);
-  const [userName, setUserName] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [companyId, setCompanyId] = useState('');
+  const [userName, setUserName] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [companyId, setCompanyId] = useState("");
 
   useEffect(() => {
     inputRefs.current[0]?.focus();
@@ -29,41 +34,46 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setCountdown(prev => (prev > 0 ? prev - 1 : 0));
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
   const formatTime = (s: number) =>
-    `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+    `${Math.floor(s / 60)
+      .toString()
+      .padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
   const handleDigitChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
     const newDigits = [...digits];
     newDigits[index] = value.slice(-1);
     setDigits(newDigits);
-    setError('');
+    setError("");
 
     if (value && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
 
-    if (value && index === 5 && newDigits.every(d => d !== '')) {
-      handleVerify(newDigits.join(''));
+    if (value && index === 5 && newDigits.every((d) => d !== "")) {
+      handleVerify(newDigits.join(""));
     }
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !digits[index] && index > 0) {
+    if (e.key === "Backspace" && !digits[index] && index > 0) {
       inputRefs.current[index - 1]?.focus();
     }
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    const pasted = e.clipboardData
+      .getData("text")
+      .replace(/\D/g, "")
+      .slice(0, 6);
     if (pasted.length === 6) {
-      setDigits(pasted.split(''));
+      setDigits(pasted.split(""));
       handleVerify(pasted);
     }
   };
@@ -71,17 +81,17 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
   const handleVerify = async (code: string) => {
     if (code.length !== 6 || countdown === 0) return;
     setIsLoading(true);
-    setError('');
+    setError("");
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId, code }),
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Código inválido');
+      if (!response.ok) throw new Error(data.message || "Código inválido");
 
       // Guardar datos del usuario
       const userData = {
@@ -90,33 +100,34 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
         name: data.user.name,
         role: data.user.role,
         company_id: data.user.company_id,
-        company_name: data.user.company_name || '',
+        company_name: data.user.company_name || "",
       };
 
-      localStorage.setItem('auth_token', data.access_token);
-      localStorage.setItem('user_data', JSON.stringify(userData));
-      
+      localStorage.setItem("auth_token", data.access_token);
+      localStorage.setItem("user_data", JSON.stringify(userData));
+
       setUserName(userData.name);
       setCompanyName(userData.company_name);
       setCompanyId(userData.company_id);
 
       // Mostrar wizard si es primer login
       if (data.user.is_first_login === true) {
-        setShowWizard(true);
+        localStorage.setItem("show_wizard", "true"); // ← persiste
+        navigate("/dashboard");
       } else {
-        navigate('/dashboard');
+        navigate("/dashboard");
       }
     } catch (err: any) {
-      setError(err.message || 'Código inválido o expirado');
-      setDigits(['', '', '', '', '', '']);
+      setError(err.message || "Código inválido o expirado");
+      setDigits(["", "", "", "", "", ""]);
       inputRefs.current[0]?.focus();
     } finally {
       setIsLoading(false);
     }
   };
 
-  const maskedEmail = email.replace(/(.{2})(.*)(@.*)/, '$1***$3');
-  
+  const maskedEmail = email.replace(/(.{2})(.*)(@.*)/, "$1***$3");
+
   // Mostrar wizard si es necesario
   if (showWizard) {
     return (
@@ -124,11 +135,11 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
         isOpen={true}
         onClose={() => {
           setShowWizard(false);
-          navigate('/dashboard');
+          navigate("/dashboard");
         }}
         onComplete={() => {
           setShowWizard(false);
-          navigate('/dashboard');
+          navigate("/dashboard");
         }}
         userName={userName}
         companyName={companyName}
@@ -140,14 +151,17 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-
         {/* Header */}
         <div className="bg-gradient-to-r from-green-600 to-emerald-700 p-8 text-center">
           <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <ShieldCheck size={32} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">¡Bienvenid@ a Omni-Notify!</h1>
-          <p className="text-green-100 text-sm">Verifica tu cuenta para continuar</p>
+          <h1 className="text-2xl font-bold text-white mb-2">
+            ¡Bienvenid@ a Omni-Notify!
+          </h1>
+          <p className="text-green-100 text-sm">
+            Verifica tu cuenta para continuar
+          </p>
         </div>
 
         <div className="p-8">
@@ -155,7 +169,9 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
           <div className="flex items-center gap-3 bg-green-50 rounded-xl p-4 mb-6 border border-green-100">
             <Mail size={18} className="text-green-600 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-green-800">Código enviado a:</p>
+              <p className="text-sm font-medium text-green-800">
+                Código enviado a:
+              </p>
               <p className="text-sm text-green-600 font-mono">{maskedEmail}</p>
             </div>
           </div>
@@ -169,17 +185,19 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
             {digits.map((digit, i) => (
               <input
                 key={i}
-                ref={el => { inputRefs.current[i] = el; }}
+                ref={(el) => {
+                  inputRefs.current[i] = el;
+                }}
                 type="text"
                 inputMode="numeric"
                 maxLength={1}
                 value={digit}
-                onChange={e => handleDigitChange(i, e.target.value)}
-                onKeyDown={e => handleKeyDown(i, e)}
+                onChange={(e) => handleDigitChange(i, e.target.value)}
+                onKeyDown={(e) => handleKeyDown(i, e)}
                 disabled={isLoading || countdown === 0}
                 className={`w-12 h-14 text-center text-2xl font-bold rounded-xl border-2 outline-none transition-all
-                  ${digit ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-800'}
-                  ${error ? 'border-red-400 bg-red-50' : ''}
+                  ${digit ? "border-green-500 bg-green-50 text-green-700" : "border-gray-200 text-gray-800"}
+                  ${error ? "border-red-400 bg-red-50" : ""}
                   focus:border-green-500 focus:ring-2 focus:ring-green-100
                   disabled:opacity-50 disabled:cursor-not-allowed`}
               />
@@ -188,15 +206,19 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
 
           {/* Error */}
           {error && (
-            <p className="text-center text-sm text-red-600 mt-2 mb-2 font-medium">{error}</p>
+            <p className="text-center text-sm text-red-600 mt-2 mb-2 font-medium">
+              {error}
+            </p>
           )}
 
           {/* Countdown */}
           <div className="text-center mt-3 mb-6">
             {countdown > 0 ? (
               <p className="text-sm text-gray-500">
-                Código válido por{' '}
-                <span className={`font-bold tabular-nums ${countdown < 60 ? 'text-red-500' : 'text-gray-700'}`}>
+                Código válido por{" "}
+                <span
+                  className={`font-bold tabular-nums ${countdown < 60 ? "text-red-500" : "text-gray-700"}`}
+                >
                   {formatTime(countdown)}
                 </span>
               </p>
@@ -209,8 +231,8 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
 
           {/* Botón verificar */}
           <button
-            onClick={() => handleVerify(digits.join(''))}
-            disabled={digits.some(d => !d) || isLoading || countdown === 0}
+            onClick={() => handleVerify(digits.join(""))}
+            disabled={digits.some((d) => !d) || isLoading || countdown === 0}
             className="w-full py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-green-300 
                        text-white font-semibold rounded-xl transition-all mb-3"
           >
@@ -220,7 +242,7 @@ const OtpVerification: React.FC<OtpVerificationProps> = ({ userId, email, onBack
                 Verificando...
               </span>
             ) : (
-              'Verificar y entrar'
+              "Verificar y entrar"
             )}
           </button>
 
